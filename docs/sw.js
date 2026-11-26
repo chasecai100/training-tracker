@@ -1,6 +1,6 @@
 // Offline support: serve the app from cache when there's no signal,
 // but always try the network first (for up to 3 seconds) so updates arrive.
-const CACHE = 'tt-v1';
+const CACHE = 'tt-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const ASSETS = [
   './config.js',
   './exercises.js',
   './manifest.webmanifest',
+  './icon.svg',
   './icon-192.png',
   './icon-512.png',
   './apple-touch-icon.png',

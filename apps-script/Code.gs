@@ -4,18 +4,26 @@
  * Training Tracker backend.
  *
  * Lives inside the "Training Log" Google Sheet (Extensions > Apps Script).
- * The web app sends sets here, and this script writes them to the Sets and
- * Sessions tabs. Every request must carry the passphrase you set from the
- * sheet's "Training Tracker > Set passphrase" menu.
+ * The web app sends sets, sessions and exercise notes here, and this script
+ * writes them to the Sets, Sessions and Notes tabs. Every request must carry
+ * the passphrase you set from the sheet's "Training Tracker > Set passphrase" menu.
+ *
+ * After changing this file: Deploy > Manage deployments > edit (pencil) >
+ * Version: New version > Deploy. That keeps the same web address.
  */
 
 const SETS = 'Sets';
 const SESSIONS = 'Sessions';
-const SET_HEADERS = ['Date', 'Time', 'Day', 'Exercise', 'Variation', 'Set', 'Side', 'kg', 'Reps', 'Session', 'ID'];
-const SESSION_HEADERS = ['Session', 'Date', 'Day', 'Start', 'End', 'Length (min)'];
+const NOTES = 'Notes';
+const HEADERS = {
+  Sets: ['Date', 'Time', 'Day', 'Exercise', 'Variation', 'Set', 'Side', 'kg', 'Reps', 'Start', 'End', 'Set (s)', 'Rest (s)', 'Session', 'ID'],
+  Sessions: ['Session', 'Date', 'Day', 'Start', 'End', 'Length (min)', 'Sets', 'Work (min)', 'Rest (min)'],
+  Notes: ['Exercise', 'Note', 'Updated'],
+};
 const FORMATS = {
-  Sets: { Date: 'yyyy-mm-dd', Time: 'HH:mm', Session: '@', ID: '@' },
+  Sets: { Date: 'yyyy-mm-dd', Time: 'HH:mm', Start: 'HH:mm:ss', End: 'HH:mm:ss', Session: '@', ID: '@' },
   Sessions: { Session: '@', Date: 'yyyy-mm-dd', Start: 'HH:mm', End: 'HH:mm' },
+  Notes: { Exercise: '@', Note: '@', Updated: 'yyyy-mm-dd HH:mm' },
 };
 
 // ---------- Sheet menu ----------
@@ -28,11 +36,12 @@ function onOpen() {
     .addToUi();
 }
 
-/** Creates the Sets and Sessions tabs. Safe to run more than once. */
+/** Creates or updates the Sets, Sessions and Notes tabs. Safe to run more than once. */
 function setupTabs() {
   const ss = SpreadsheetApp.getActive();
   sheet_(SETS);
   sheet_(SESSIONS);
+  sheet_(NOTES);
   const blank = ss.getSheetByName('Sheet1');
   if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
 }
@@ -93,6 +102,7 @@ function sync_(req) {
   try {
     upsert_(SETS, 'ID', req.sets, req.deleteSets);
     upsert_(SESSIONS, 'Session', req.sessions, req.deleteSessions);
+    upsert_(NOTES, 'Exercise', req.notes, []);
     SpreadsheetApp.flush();
     return { ok: true };
   } finally {
@@ -109,14 +119,16 @@ function history_() {
     const rows = n > 0 ? sh.getRange(2, 1, n, cols).getDisplayValues() : [];
     return { headers: headers, rows: rows };
   };
-  return { ok: true, sets: read(SETS), sessions: read(SESSIONS) };
+  return { ok: true, sets: read(SETS), sessions: read(SESSIONS), notes: read(NOTES) };
 }
 
 /**
  * Updates rows whose id already exists, appends new ones, and deletes the
- * ids in deleteIds. Items are objects keyed by column header.
+ * ids in deleteIds. Items are objects keyed by column header; columns an item
+ * doesn't mention are left as they are.
  */
 function upsert_(name, idHeader, items, deleteIds) {
+  if (!(items && items.length) && !(deleteIds && deleteIds.length)) return;
   const sh = sheet_(name);
   const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0];
   const idCol = headers.indexOf(idHeader);
@@ -170,16 +182,38 @@ function upsert_(name, idHeader, items, deleteIds) {
 function sheet_(name) {
   const ss = SpreadsheetApp.getActive();
   let sh = ss.getSheetByName(name);
-  if (sh) return sh;
-  const headers = name === SETS ? SET_HEADERS : SESSION_HEADERS;
-  sh = ss.insertSheet(name);
-  sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
-  sh.setFrozenRows(1);
-  format_(sh, name, headers, 2, sh.getMaxRows() - 1);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.setFrozenRows(1);
+  }
+  ensureHeaders_(sh, name);
   return sh;
 }
 
+/** Makes sure every column the app uses exists, without disturbing existing data. */
+function ensureHeaders_(sh, name) {
+  const want = HEADERS[name];
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  const have = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0].filter(String);
+  if (sh.getLastRow() <= 1) {
+    if (have.join('|') === want.join('|')) return;
+    if (sh.getMaxColumns() < want.length) sh.insertColumnsAfter(sh.getMaxColumns(), want.length - sh.getMaxColumns());
+    sh.getRange(1, 1, 1, Math.max(lastCol, want.length)).clearContent();
+    sh.getRange(1, 1, 1, want.length).setValues([want]).setFontWeight('bold');
+    format_(sh, name, want, 2, sh.getMaxRows() - 1);
+    return;
+  }
+  const missing = want.filter((h) => have.indexOf(h) < 0);
+  if (!missing.length) return;
+  const start = have.length + 1;
+  const needCols = start + missing.length - 1 - sh.getMaxColumns();
+  if (needCols > 0) sh.insertColumnsAfter(sh.getMaxColumns(), needCols);
+  sh.getRange(1, start, 1, missing.length).setValues([missing]).setFontWeight('bold');
+  format_(sh, name, have.concat(missing), 2, sh.getMaxRows() - 1);
+}
+
 function format_(sh, name, headers, start, n) {
+  if (n < 1) return;
   const fmt = FORMATS[name] || {};
   Object.keys(fmt).forEach((h) => {
     const c = headers.indexOf(h);

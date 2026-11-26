@@ -4,14 +4,23 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '1.0.0';
+  const VERSION = '2.0.0';
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
+  // Exercise names from the first version's list, used once to tell them apart from ones you added.
+  const V1_NAMES = [
+    'Machine Press (Weight stack)', 'Machine Press (Plate)', 'Incline Smith Bench', 'Landmine Press', 'Pec Deck',
+    'Smith Shoulder Press', 'Dumbbell Shoulder Press', 'Dumbbell Pullover', 'Tricep Overhead Extension', 'Ab Raise',
+    'Pull-up', 'Chin-up', 'Seated Row', 'Supported Row', 'Lat Pulldown (Single)', 'Lat Pulldown (Double)',
+    'Reverse Fly (Double)', 'Reverse Fly (Single)', 'Cable Biceps', 'Supported Biceps (Single)', 'Face Pull', 'Ab Crunch',
+    'Leg Press', 'Machine Calf Raise', 'Hamstring Curl', 'Leg Extension', 'Adductor', 'Lateral Raise',
+  ];
 
   const ICON = {
-    check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     lift: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6M6.5 6.5v11M17.5 6.5v11M21 9v6M6.5 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     chart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16M6 15.5l4-5 3 3 5-6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6zM12 13v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>',
   };
 
   // ---------- Small helpers ----------
@@ -21,7 +30,9 @@
   const pad = (n) => String(n).padStart(2, '0');
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const hms = (d) => `${hm(d)}:${pad(d.getSeconds())}`;
   const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+  const clone = (o) => JSON.parse(JSON.stringify(o));
   const num = (v) => {
     if (v === '' || v == null) return null;
     const n = parseFloat(String(v).replace(',', '.'));
@@ -82,29 +93,57 @@
   })();
 
   // ---------- State ----------
+  let notice = '';
   const S = {
     settings: Object.assign({ pass: '', restSec: 120, sound: true, keepAwake: true }, load(KEYS.settings, {})),
     library: loadLibrary(),
-    current: load(KEYS.current, null),
-    pending: Object.assign({ sets: {}, deleteSets: [], sessions: {}, deleteSessions: [] }, load(KEYS.pending, {})),
-    history: { sets: [], sessions: [] },
+    current: loadCurrent(),
+    pending: Object.assign({ sets: {}, deleteSets: [], sessions: {}, deleteSessions: [], notes: {} }, load(KEYS.pending, {})),
+    history: { sets: [], sessions: [], notes: [] },
     tab: 'workout',
     modal: null,
     sync: 'idle',
-    progress: { name: null, variation: '' },
+    page: { name: null, variation: '' },
+    editingNote: null,
   };
 
+  function normalizeEx(e) {
+    const x = clone(e);
+    if (Array.isArray(x.attachments)) {
+      x.variations = x.attachments.map((n) => ({ name: n }));
+      x.label = 'Attachment';
+      delete x.attachments;
+    }
+    return x;
+  }
+
   function loadLibrary() {
-    const lib = load(KEYS.library, null) || { exercises: [], days: {} };
-    const have = new Set(lib.exercises.map((e) => e.name));
-    DEF.exercises.forEach((e) => {
-      if (!have.has(e.name)) lib.exercises.push(JSON.parse(JSON.stringify(e)));
-    });
-    DAYS.forEach((d) => {
-      if (!Array.isArray(lib.days[d])) lib.days[d] = JSON.parse(JSON.stringify(DEF.days[d] || []));
-    });
+    let lib = load(KEYS.library, null);
+    if (!lib || lib.version !== DEF.version) {
+      const custom =
+        lib && Array.isArray(lib.exercises)
+          ? lib.exercises.filter((e) => !V1_NAMES.includes(e.name) && !DEF.exercises.some((d) => d.name === e.name)).map(normalizeEx)
+          : [];
+      lib = { version: DEF.version, exercises: clone(DEF.exercises).concat(custom), days: clone(DEF.days) };
+    } else {
+      const have = new Set(lib.exercises.map((e) => e.name));
+      DEF.exercises.forEach((e) => !have.has(e.name) && lib.exercises.push(clone(e)));
+      DAYS.forEach((d) => {
+        if (!Array.isArray(lib.days[d])) lib.days[d] = clone(DEF.days[d] || []);
+      });
+    }
     store(KEYS.library, lib);
     return lib;
+  }
+
+  function loadCurrent() {
+    const c = load(KEYS.current, null);
+    if (c && c.v !== 2) {
+      store(KEYS.current, null);
+      notice = 'The app was updated, so your open workout was closed. Sets you had ticked off are saved.';
+      return null;
+    }
+    return c;
   }
 
   const persist = () => store(KEYS.current, S.current);
@@ -112,14 +151,22 @@
   const saveSettings = () => store(KEYS.settings, S.settings);
   const saveLibrary = () => store(KEYS.library, S.library);
   const exDef = (name) => S.library.exercises.find((e) => e.name === name) || { name };
+  const varDef = (def, v) => (def.variations || []).find((x) => x.name === v) || null;
+  const hasVariations = (def) => Array.isArray(def.variations) && def.variations.length > 0;
   const hasPending = () =>
-    Object.keys(S.pending.sets).length + S.pending.deleteSets.length + Object.keys(S.pending.sessions).length + S.pending.deleteSessions.length;
+    Object.keys(S.pending.sets).length +
+    S.pending.deleteSets.length +
+    Object.keys(S.pending.sessions).length +
+    S.pending.deleteSessions.length +
+    Object.keys(S.pending.notes).length;
 
   // ---------- History queries ----------
   let memoSets = null;
+  let memoNotes = null;
   const memoHist = new Map();
   function invalidate() {
     memoSets = null;
+    memoNotes = null;
     memoHist.clear();
   }
 
@@ -135,16 +182,24 @@
     return (memoSets = [...map.values()]);
   }
 
+  function notesMap() {
+    if (memoNotes) return memoNotes;
+    const m = {};
+    S.history.notes.forEach((r) => (m[r.Exercise] = r.Note || ''));
+    Object.values(S.pending.notes).forEach((r) => (m[r.Exercise] = r.Note || ''));
+    return (memoNotes = m);
+  }
+  const noteOf = (name) => notesMap()[name] || '';
+
   /** Earlier sessions of one exercise, newest first, each with its sets grouped. */
   function historyFor(name, variation) {
     const cur = S.current ? S.current.session : '';
     const key = `${name}|${variation || ''}|${cur}`;
     if (memoHist.has(key)) return memoHist.get(key);
-    const def = exDef(name);
     const by = new Map();
     allSets().forEach((r) => {
       if (r.Exercise !== name || r.Session === cur) return;
-      if (variation && def.attachments && r.Variation !== variation) return;
+      if (variation && r.Variation !== variation) return;
       let s = by.get(r.Session);
       if (!s) by.set(r.Session, (s = { session: r.Session, date: r.Date, time: r.Time || '', rows: [] }));
       if (`${r.Date} ${r.Time}` < `${s.date} ${s.time}`) {
@@ -159,9 +214,8 @@
     memoHist.set(key, out);
     return out;
   }
-  const lastFor = (name, variation) => historyFor(name, variation)[0] || null;
 
-  /** Turns rows (one per side for one-arm exercises) into one entry per set. */
+  /** Turns rows (one per side for one-arm sets) into one entry per set. */
   function groupSets(rows) {
     const by = new Map();
     rows
@@ -169,9 +223,12 @@
       .sort((a, b) => num(a.Set) - num(b.Set))
       .forEach((r) => {
         const k = num(r.Set);
-        const e = by.get(k) || { set: k, kg: num(r.kg), variation: r.Variation || '', reps: null, repsR: null };
+        const e = by.get(k) || { set: k, kg: num(r.kg), variation: r.Variation || '', reps: null, repsR: null, rest: null };
         if (r.Side === 'R') e.repsR = num(r.Reps);
-        else e.reps = num(r.Reps);
+        else {
+          e.reps = num(r.Reps);
+          e.rest = num(r['Rest (s)']);
+        }
         if (e.kg == null) e.kg = num(r.kg);
         by.set(k, e);
       });
@@ -187,15 +244,19 @@
     }
     return e.kg != null ? `${fmt(e.kg)} kg` : '';
   }
-  function repsLabel(e, def) {
+  function repsLabel(e) {
     const r = (x) => (x == null ? '–' : x);
-    return def.oneArm ? `L${r(e.reps)}/R${r(e.repsR)}` : `${r(e.reps)}`;
+    return e.repsR != null ? `L${r(e.reps)}/R${r(e.repsR)}` : `${r(e.reps)}`;
   }
   function summary(entries, def) {
     if (!entries.length) return '';
     const ws = entries.map((e) => weightLabel(e, def));
-    if (ws.every((w) => w === ws[0])) return `${ws[0] ? ws[0] + ' × ' : ''}${entries.map((e) => repsLabel(e, def)).join(', ')}`;
-    return entries.map((e, i) => `${ws[i] ? ws[i] + ' × ' : ''}${repsLabel(e, def)}`).join(', ');
+    if (ws.every((w) => w === ws[0])) return `${ws[0] ? ws[0] + ' × ' : ''}${entries.map(repsLabel).join(', ')}`;
+    return entries.map((e, i) => `${ws[i] ? ws[i] + ' × ' : ''}${repsLabel(e)}`).join(', ');
+  }
+  function avgRest(entries) {
+    const r = entries.map((e) => e.rest).filter((x) => x != null && x > 0);
+    return r.length ? r.reduce((a, b) => a + b, 0) / r.length : null;
   }
 
   function cmp(kg, reps, pkg, preps) {
@@ -211,23 +272,72 @@
   }
 
   // ---------- Workout model ----------
-  function variationOf(def, ex, s) {
-    if (!def.bodyweight) return ex.variation || '';
+  // A workout has blocks (cards). Each block holds one exercise, or two for a superset.
+  // Each exercise in a block is an "item" with its own sets; the same exercise can
+  // appear twice in a day (Calves), and its set numbers then carry on across both.
+  const orderedKeys = () => S.current.blocks.reduce((a, b) => a.concat(b.keys), []);
+  const blockOf = (k) => S.current.blocks.find((b) => b.keys.includes(k));
+  const itemDef = (k) => exDef(S.current.items[k].name);
+  const oneArm = (k) => {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    return !!def.oneArm || !!(varDef(def, it.variation) || {}).oneArm;
+  };
+  const varFilter = (k) => (hasVariations(itemDef(k)) ? S.current.items[k].variation : '');
+  const lastOf = (k) => historyFor(S.current.items[k].name, varFilter(k))[0] || null;
+
+  function setNo(k, i) {
+    const name = S.current.items[k].name;
+    let off = 0;
+    for (const key of orderedKeys()) {
+      if (key === k) break;
+      if (S.current.items[key].name === name) off += S.current.items[key].sets.length;
+    }
+    return off + i + 1;
+  }
+  function entryFor(k, i) {
+    const last = lastOf(k);
+    if (!last) return null;
+    const no = setNo(k, i);
+    return last.entries.find((e) => e.set === no) || null;
+  }
+  function forEachSet(fn) {
+    if (!S.current) return;
+    orderedKeys().forEach((k) => S.current.items[k].sets.forEach((s, i) => fn(k, i, s)));
+  }
+  function runningSet() {
+    let found = null;
+    forEachSet((k, i, s) => {
+      if (s.start && !s.end) found = { k, i, s };
+    });
+    return found;
+  }
+
+  function variationOf(k, s) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    if (!def.bodyweight) return it.variation || '';
     if (s.mode === 'Weighted') return 'Weighted';
     if (s.mode === 'Band') return 'Band: ' + (cap((s.band || '').trim()) || 'Purple');
     return 'Bodyweight';
   }
-  const lastOf = (n) => {
-    const def = exDef(n);
-    return lastFor(n, def.attachments ? S.current.ex[n].variation : '');
-  };
 
-  function newSet(name, i) {
+  function defaultVariation(name) {
     const def = exDef(name);
-    const s = { id: uid(), kg: '', reps: '', repsR: '', mode: 'Bodyweight', band: 'Purple', done: false, at: null };
+    if (!hasVariations(def)) return '';
+    const recent = historyFor(name, '')[0];
+    const used = recent && recent.entries.length ? recent.entries[0].variation : '';
+    return varDef(def, used) ? used : def.variations[0].name;
+  }
+
+  function newSet(k, i) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const s = { id: uid(), kg: '', reps: '', repsR: '', mode: 'Bodyweight', band: 'Purple', start: null, end: null, rest: null };
     if (def.bodyweight) {
-      const last = lastFor(name, '');
-      const p = last && (last.entries[i] || last.entries[last.entries.length - 1]);
+      const last = historyFor(it.name, '')[0];
+      const no = setNo(k, i);
+      const p = last && (last.entries.find((e) => e.set === no) || last.entries[last.entries.length - 1]);
       if (p) {
         const v = p.variation || 'Bodyweight';
         s.mode = v === 'Weighted' ? 'Weighted' : v.indexOf('Band') === 0 ? 'Band' : 'Bodyweight';
@@ -237,37 +347,45 @@
     return s;
   }
 
-  function newEx(name) {
-    const def = exDef(name);
-    let variation = '';
-    if (def.attachments) {
-      const recent = historyFor(name, '')[0];
-      const used = recent && recent.entries.length ? recent.entries[0].variation : '';
-      variation = def.attachments.includes(used) ? used : def.attachments[0];
-    }
-    const last = lastFor(name, variation);
-    const count = Math.max(1, Math.min(last ? last.entries.length : 3, 8));
-    const ex = { variation, sets: [] };
-    for (let i = 0; i < count; i++) ex.sets.push(newSet(name, i));
-    return ex;
+  function addBlock(names, sets, open = true) {
+    const c = S.current;
+    const b = { id: uid(), keys: [] };
+    c.blocks.push(b);
+    names.forEach((n) => {
+      const k = uid();
+      c.items[k] = { name: n, variation: defaultVariation(n), sets: [] };
+      b.keys.push(k);
+    });
+    b.keys.forEach((k) => {
+      let count = sets;
+      if (!count) {
+        const last = lastOf(k);
+        count = Math.max(1, Math.min(last ? last.entries.length : 3, 8));
+      }
+      for (let i = 0; i < count; i++) c.items[k].sets.push(newSet(k, i));
+    });
+    if (open) c.open = b.id;
+    return b;
   }
 
   function startWorkout(day) {
     const now = new Date();
     S.current = {
+      v: 2,
       session: `${ymd(now)}-${pad(now.getHours())}${pad(now.getMinutes())}`,
       day: day === 'Other' ? 'Workout' : day,
       created: now.toISOString(),
-      start: null,
       blocks: [],
-      ex: {},
+      items: {},
       open: null,
-      restEnd: null,
-      restTotal: S.settings.restSec,
-      restBeeped: true,
+      firstStart: null,
+      lastEnd: null,
+      restCountdown: false,
+      restExtra: 0,
+      beepedAt: null,
     };
     invalidate();
-    (S.library.days[day] || []).forEach((it) => addBlock(Array.isArray(it) ? it : [it], false));
+    (S.library.days[day] || []).forEach((it) => addBlock(it.names, it.sets, false));
     S.current.open = S.current.blocks.length ? S.current.blocks[0].id : null;
     S.tab = 'workout';
     persist();
@@ -277,77 +395,69 @@
     window.scrollTo(0, 0);
   }
 
-  function addBlock(names, open = true) {
-    const c = S.current;
-    const existing = c.blocks.find((b) => names.every((n) => b.names.includes(n)));
-    if (existing) {
-      if (open) c.open = existing.id;
-      return existing;
-    }
-    names.forEach((n) => {
-      if (!c.ex[n]) c.ex[n] = newEx(n);
-    });
-    const b = { id: uid(), names };
-    c.blocks.push(b);
-    if (open) c.open = b.id;
-    return b;
-  }
-
-  function placeholder(n, i) {
-    const def = exDef(n);
-    const ex = S.current.ex[n];
-    const last = lastOf(n);
-    const p = last ? last.entries[i] || null : null;
-    let kg = null;
-    for (let j = i - 1; j >= 0 && kg == null; j--) {
-      const prev = ex.sets[j];
-      if (!def.bodyweight || prev.mode === 'Weighted') kg = num(prev.kg);
-    }
+  function placeholder(k, i) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const last = lastOf(k);
+    const p = entryFor(k, i);
+    const wantsKg = (set) => !def.bodyweight || set.mode === 'Weighted';
+    const prev = i > 0 && wantsKg(it.sets[i - 1]) ? it.sets[i - 1] : null;
+    // Weight hint: what you typed for the set before, else last time's same set,
+    // else the hint the set before got, else last time's final set.
+    let kg = prev ? num(prev.kg) : null;
     if (kg == null && p && (!def.bodyweight || p.variation === 'Weighted')) kg = p.kg;
-    if (kg == null && last && !def.bodyweight && last.entries.length) kg = last.entries[last.entries.length - 1].kg;
+    if (kg == null && prev) kg = placeholder(k, i - 1).kg;
+    if (kg == null && last) {
+      const pool = last.entries.filter((e) => e.kg != null && (!def.bodyweight || e.variation === 'Weighted'));
+      if (pool.length) kg = pool[pool.length - 1].kg;
+    }
     return { kg, reps: p ? p.reps : null, repsR: p ? p.repsR : null };
   }
 
-  function compareSet(n, i) {
-    const def = exDef(n);
-    const ex = S.current.ex[n];
-    const s = ex.sets[i];
-    const last = lastOf(n);
-    const p = last && last.entries[i];
+  function compareSet(k, i) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const s = it.sets[i];
+    const p = entryFor(k, i);
     if (!p) return null;
-    if (def.bodyweight && variationOf(def, ex, s) !== (p.variation || 'Bodyweight')) return null;
+    if (def.bodyweight && variationOf(k, s) !== (p.variation || 'Bodyweight')) return null;
     const kg = def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg);
-    if (def.oneArm) return { L: cmp(kg, num(s.reps), p.kg, p.reps), R: cmp(kg, num(s.repsR), p.kg, p.repsR) };
+    if (oneArm(k)) return { L: cmp(kg, num(s.reps), p.kg, p.reps), R: cmp(kg, num(s.repsR), p.kg, p.repsR) };
     return { one: cmp(kg, num(s.reps), p.kg, p.reps) };
   }
 
-  const rowIds = (n, s) => (exDef(n).oneArm ? [s.id + '-L', s.id + '-R'] : [s.id]);
+  const rowIds = (k, s) => (oneArm(k) ? [s.id + '-L', s.id + '-R'] : [s.id]);
 
-  function rowsFor(n, i) {
+  function rowsFor(k, i) {
     const c = S.current;
-    const def = exDef(n);
-    const ex = c.ex[n];
-    const s = ex.sets[i];
-    const at = new Date(s.at);
+    const it = c.items[k];
+    const def = exDef(it.name);
+    const s = it.sets[i];
+    const en = new Date(s.end);
+    const st = s.start ? new Date(s.start) : en;
+    const dur = s.start ? Math.max(0, Math.round((en - st) / 1000)) : '';
     let kg = num(s.kg);
     if (def.bodyweight && s.mode !== 'Weighted') kg = null;
     const base = {
-      Date: ymd(at),
-      Time: hm(at),
+      Date: ymd(st),
+      Time: hm(st),
       Day: c.day,
-      Exercise: n,
-      Variation: variationOf(def, ex, s),
-      Set: i + 1,
+      Exercise: it.name,
+      Variation: variationOf(k, s),
+      Set: setNo(k, i),
       kg: kg == null ? '' : kg,
+      Start: hms(st),
+      End: hms(en),
       Session: c.session,
     };
-    if (def.oneArm) {
+    const rest = s.rest == null ? '' : s.rest;
+    if (oneArm(k)) {
       return [
-        Object.assign({}, base, { Side: 'L', Reps: num(s.reps), ID: s.id + '-L' }),
-        Object.assign({}, base, { Side: 'R', Reps: num(s.repsR), ID: s.id + '-R' }),
+        Object.assign({}, base, { Side: 'L', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id + '-L' }),
+        Object.assign({}, base, { Side: 'R', Reps: num(s.repsR), 'Set (s)': '', 'Rest (s)': '', ID: s.id + '-R' }),
       ];
     }
-    return [Object.assign({}, base, { Side: '', Reps: num(s.reps), ID: s.id })];
+    return [Object.assign({}, base, { Side: '', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id })];
   }
 
   function queueRows(rows) {
@@ -365,15 +475,53 @@
     savePending();
     invalidate();
   }
-  function queueSession(end) {
+  /** Re-sends every finished set of these exercises (their set numbers may have shifted). */
+  function requeueNames(names) {
+    forEachSet((k, i, s) => {
+      if (s.end && names.includes(S.current.items[k].name)) queueRows(rowsFor(k, i));
+    });
+  }
+
+  function sessionStats() {
+    let first = null;
+    let last = null;
+    let sets = 0;
+    let work = 0;
+    let rest = 0;
+    let rests = 0;
+    forEachSet((k, i, s) => {
+      if (!s.end) return;
+      sets++;
+      const en = new Date(s.end);
+      const st = s.start ? new Date(s.start) : en;
+      if (!first || st < first) first = st;
+      if (!last || en > last) last = en;
+      work += (en - st) / 1000;
+      if (s.rest) {
+        rest += s.rest;
+        rests++;
+      }
+    });
+    return { first, last, sets, work, rest, avgRest: rests ? rest / rests : null };
+  }
+  function queueSession() {
     const c = S.current;
-    const st = new Date(c.start || c.created);
-    const row = { Session: c.session, Date: ymd(st), Day: c.day, Start: hm(st) };
-    if (end) {
-      row.End = hm(end);
-      row['Length (min)'] = Math.max(1, Math.round((end - st) / 60000));
+    const st = sessionStats();
+    if (!st.sets) {
+      dropSession(c.session);
+      return;
     }
-    S.pending.sessions[c.session] = row;
+    S.pending.sessions[c.session] = {
+      Session: c.session,
+      Date: ymd(st.first),
+      Day: c.day,
+      Start: hm(st.first),
+      End: hm(st.last),
+      'Length (min)': Math.max(1, Math.round((st.last - st.first) / 60000)),
+      Sets: st.sets,
+      'Work (min)': Math.round(st.work / 6) / 10,
+      'Rest (min)': Math.round(st.rest / 6) / 10,
+    };
     S.pending.deleteSessions = S.pending.deleteSessions.filter((x) => x !== c.session);
     savePending();
   }
@@ -384,73 +532,90 @@
   }
 
   const requeueTimers = {};
-  function requeueSoon(n, i) {
-    const key = n + '|' + i;
+  function requeueSoon(k, i) {
+    const key = k + '|' + i;
     clearTimeout(requeueTimers[key]);
     requeueTimers[key] = setTimeout(() => {
-      const s = S.current && S.current.ex[n] && S.current.ex[n].sets[i];
-      if (s && s.done) {
-        queueRows(rowsFor(n, i));
+      const it = S.current && S.current.items[k];
+      const s = it && it.sets[i];
+      if (s && s.end) {
+        queueRows(rowsFor(k, i));
         scheduleSync();
       }
     }, 800);
   }
 
-  function tick(n, i, btn) {
+  // Start, end and undo a set
+  function startSet(k, i) {
     const c = S.current;
-    const def = exDef(n);
-    const s = c.ex[n].sets[i];
+    const s = c.items[k].sets[i];
+    const run = runningSet();
+    if (run) {
+      toast('End the set that’s running first');
+      return;
+    }
+    const now = new Date();
+    s.start = now.toISOString();
+    s.rest = c.lastEnd ? Math.round((now - new Date(c.lastEnd)) / 1000) : null;
+    if (!c.firstStart) c.firstStart = s.start;
     unlockAudio();
-    if (s.done) {
-      s.done = false;
-      s.at = null;
-      unqueueRows(rowIds(n, s));
-      persist();
-      render();
-      scheduleSync();
-      return;
-    }
-    const ph = placeholder(n, i);
+    keepAwake(true);
+    persist();
+    render();
+  }
+
+  function endSet(k, i) {
+    const c = S.current;
+    const it = c.items[k];
+    const def = exDef(it.name);
+    const s = it.sets[i];
+    const now = new Date();
+    s.end = now.toISOString();
+    const ph = placeholder(k, i);
     if (s.kg === '' && (!def.bodyweight || s.mode === 'Weighted') && ph.kg != null) s.kg = fmt(ph.kg);
-    if (s.mode === 'Band' && !s.band.trim()) s.band = 'Purple';
-    const row = btn.closest('.set-row');
-    const missing = [];
-    if (num(s.reps) == null) missing.push('reps');
-    if (def.oneArm && num(s.repsR) == null) missing.push('repsR');
-    if (missing.length) {
-      missing.forEach((f) => {
-        const el = row && row.querySelector(`[data-f="${f}"]`);
-        if (el) el.classList.add('err');
-      });
-      const first = row && row.querySelector(`[data-f="${missing[0]}"]`);
-      if (first) first.focus();
-      toast(def.oneArm ? 'Enter left and right reps first' : 'Enter reps first');
-      return;
-    }
-    s.done = true;
-    s.at = new Date().toISOString();
-    if (!c.start) c.start = s.at;
-    queueRows(rowsFor(n, i));
+    if (s.mode === 'Band' && !String(s.band || '').trim()) s.band = 'Purple';
+    c.lastEnd = s.end;
+    const b = blockOf(k);
+    c.restCountdown = !b || b.keys[b.keys.length - 1] === k;
+    c.restExtra = 0;
+    c.beepedAt = null;
+    unlockAudio();
+    queueRows(rowsFor(k, i));
     queueSession();
-    const block = c.blocks.find((b) => b.names.includes(n));
-    if (!block || block.names[block.names.length - 1] === n) startRest();
+    persist();
+    render();
+    scheduleSync();
+    const reps = document.querySelector(`.set-row [data-k="${k}"][data-i="${i}"][data-f="reps"]`);
+    if (reps && !reps.value) reps.focus();
+  }
+
+  function undoSet(k, i) {
+    const c = S.current;
+    const s = c.items[k].sets[i];
+    unqueueRows(rowIds(k, s));
+    s.start = null;
+    s.end = null;
+    s.rest = null;
+    let last = null;
+    let first = null;
+    forEachSet((kk, ii, x) => {
+      if (x.end && (!last || x.end > last)) last = x.end;
+      if (x.start && (!first || x.start < first)) first = x.start;
+    });
+    c.lastEnd = last;
+    c.firstStart = first;
+    queueSession();
     persist();
     render();
     scheduleSync();
   }
 
-  function startRest() {
-    const c = S.current;
-    c.restTotal = S.settings.restSec;
-    c.restEnd = Date.now() + c.restTotal * 1000;
-    c.restBeeped = false;
-  }
-
   function saveFinish() {
+    const run = runningSet();
+    if (run) endSet(run.k, run.i);
     const c = S.current;
-    const any = c.blocks.some((b) => b.names.some((n) => c.ex[n].sets.some((s) => s.done)));
-    if (any) {
-      queueSession(new Date());
+    if (sessionStats().sets) {
+      queueSession();
       toast('Workout saved');
     } else {
       dropSession(c.session);
@@ -458,9 +623,8 @@
     closeWorkout();
   }
   function discardWorkout() {
-    const c = S.current;
-    Object.keys(c.ex).forEach((n) => c.ex[n].sets.forEach((s) => s.done && unqueueRows(rowIds(n, s))));
-    dropSession(c.session);
+    forEachSet((k, i, s) => s.end && unqueueRows(rowIds(k, s)));
+    dropSession(S.current.session);
     toast('Workout discarded');
     closeWorkout();
   }
@@ -473,6 +637,18 @@
     render();
     window.scrollTo(0, 0);
     sync().then(() => refreshHistory(true));
+  }
+
+  // ---------- Notes ----------
+  function saveNote(name, text) {
+    const now = new Date();
+    S.pending.notes[name] = { Exercise: name, Note: text.trim(), Updated: `${ymd(now)} ${hm(now)}` };
+    savePending();
+    invalidate();
+    S.editingNote = null;
+    render();
+    scheduleSync();
+    toast(text.trim() ? 'Note saved' : 'Note removed');
   }
 
   // ---------- Sync with the Google Sheet ----------
@@ -502,7 +678,6 @@
     clearTimeout(syncTimer);
     syncTimer = setTimeout(sync, delay);
   }
-
   function upsertLocal(list, key, row) {
     const i = list.findIndex((r) => r[key] === row[key]);
     if (i >= 0) list[i] = row;
@@ -522,9 +697,10 @@
     const p = S.pending;
     const sets = Object.values(p.sets);
     const sessions = Object.values(p.sessions);
+    const notes = Object.values(p.notes);
     const deleteSets = p.deleteSets.slice();
     const deleteSessions = p.deleteSessions.slice();
-    if (!sets.length && !sessions.length && !deleteSets.length && !deleteSessions.length) {
+    if (!sets.length && !sessions.length && !notes.length && !deleteSets.length && !deleteSessions.length) {
       setSync('idle');
       return;
     }
@@ -534,7 +710,7 @@
     }
     setSync('syncing');
     try {
-      await api('sync', { sets, sessions, deleteSets, deleteSessions });
+      await api('sync', { sets, sessions, notes, deleteSets, deleteSessions });
       sets.forEach((r) => {
         if (p.sets[r.ID] === r) delete p.sets[r.ID];
         upsertLocal(S.history.sets, 'ID', parseSetRow(r));
@@ -542,6 +718,10 @@
       sessions.forEach((r) => {
         if (p.sessions[r.Session] === r) delete p.sessions[r.Session];
         upsertLocal(S.history.sessions, 'Session', r);
+      });
+      notes.forEach((r) => {
+        if (p.notes[r.Exercise] === r) delete p.notes[r.Exercise];
+        upsertLocal(S.history.notes, 'Exercise', r);
       });
       const ds = new Set(deleteSets);
       const dss = new Set(deleteSessions);
@@ -571,10 +751,11 @@
     try {
       await sync();
       const d = await api('history');
-      const toObjects = (t) => t.rows.map((r) => Object.fromEntries(t.headers.map((h, i) => [h, r[i]])));
+      const toObjects = (t) => (t ? t.rows.map((r) => Object.fromEntries(t.headers.map((h, i) => [h, r[i]]))) : []);
       S.history = {
         sets: toObjects(d.sets).filter((r) => r.ID).map(parseSetRow),
         sessions: toObjects(d.sessions).filter((r) => r.Session),
+        notes: toObjects(d.notes).filter((r) => r.Exercise),
       };
       lastFetch = Date.now();
       idb.set('history', S.history).catch(() => {});
@@ -589,7 +770,7 @@
   }
   const isTyping = () => {
     const a = document.activeElement;
-    return !!a && (a.tagName === 'INPUT' || a.tagName === 'SELECT');
+    return !!a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA');
   };
 
   function setSync(state) {
@@ -657,36 +838,39 @@
     }
   }
 
+  const restTarget = () => S.settings.restSec + ((S.current && S.current.restExtra) || 0);
+
   function tickClock() {
     const c = S.current;
+    if (!c) return;
+    const now = Date.now();
     const w = $('#wclock');
-    if (w && c) w.textContent = c.start ? clock((Date.now() - new Date(c.start)) / 1000) : 'not started';
-    const rest = $('#rest');
-    if (!rest || !c) return;
-    if (!c.restEnd) {
-      rest.hidden = true;
+    if (w) w.textContent = c.firstStart ? clock((now - new Date(c.firstStart)) / 1000) : 'not started';
+    const t = $('#st-time');
+    const run = runningSet();
+    if (run) {
+      const el = clock((now - new Date(run.s.start)) / 1000);
+      if (t) t.textContent = el;
+      const rb = document.getElementById('rt-' + run.s.id);
+      if (rb) rb.textContent = el;
       return;
     }
-    const left = (c.restEnd - Date.now()) / 1000;
-    rest.hidden = false;
-    if (left > 0) {
-      rest.classList.remove('over');
-      $('#resttext').textContent = `Rest ${clock(Math.ceil(left))}`;
-      $('#restbar').style.width = `${Math.min(100, 100 * (1 - left / c.restTotal))}%`;
-    } else {
-      if (!c.restBeeped) {
-        c.restBeeped = true;
-        persist();
-        if (left > -5) beep();
-      }
-      rest.classList.add('over');
-      $('#resttext').textContent = 'Rest over';
-      $('#restbar').style.width = '100%';
-      if (left < -20) {
-        c.restEnd = null;
-        persist();
-        rest.hidden = true;
-      }
+    if (!c.lastEnd) return;
+    const el = (now - new Date(c.lastEnd)) / 1000;
+    if (t) t.textContent = clock(el);
+    if (!c.restCountdown) return;
+    const target = restTarget();
+    const over = el >= target;
+    const st = $('#status');
+    if (st) st.classList.toggle('over', over);
+    const bar = $('#st-bar');
+    if (bar) bar.style.width = `${Math.min(100, (el / target) * 100)}%`;
+    const tg = $('#st-target');
+    if (tg) tg.textContent = over ? `${clock(el - target)} over` : `of ${clock(target)}`;
+    if (over && c.beepedAt !== c.lastEnd) {
+      c.beepedAt = c.lastEnd;
+      persist();
+      if (el - target < 5) beep();
     }
   }
 
@@ -695,7 +879,7 @@
     const app = $('#app');
     let html;
     if (!S.settings.pass) html = connectView();
-    else if (S.tab === 'progress') html = progressView();
+    else if (S.tab === 'exercises') html = exercisesView();
     else if (S.tab === 'settings') html = settingsView();
     else html = S.current ? workoutView() : startView();
     app.innerHTML = html;
@@ -703,17 +887,22 @@
     tabs.hidden = !S.settings.pass;
     tabs.innerHTML = S.settings.pass ? tabsHtml() : '';
     tickClock();
+    const ta = $('#note-input');
+    if (ta && document.activeElement !== ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
   }
 
   function tabsHtml() {
     const t = (id, icon, label) =>
       `<button class="${S.tab === id ? 'on' : ''}" data-action="tab" data-tab="${id}" aria-current="${S.tab === id ? 'page' : 'false'}">${icon}<span>${label}</span></button>`;
-    return t('workout', ICON.lift, S.current ? 'Workout ●' : 'Workout') + t('progress', ICON.chart, 'Progress') + t('settings', ICON.gear, 'Settings');
+    return t('workout', ICON.lift, S.current ? 'Workout ●' : 'Workout') + t('exercises', ICON.chart, 'Exercises') + t('settings', ICON.gear, 'Settings');
   }
 
   function connectView() {
     return `<div class="connect">
-      <div class="logo">${ICON.lift}</div>
+      <img class="logo" src="icon.svg" alt="">
       <h1>Training Tracker</h1>
       <p class="muted">Enter the passphrase you set in your Training Log sheet. You only do this once on each device.</p>
       <input id="pass" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Passphrase" enterkeyhint="go">
@@ -734,10 +923,10 @@
         s.time = r.Time || '';
       }
     });
-    const lens = {};
-    S.history.sessions.concat(Object.values(S.pending.sessions)).forEach((r) => (lens[r.Session] = num(r['Length (min)'])));
+    const info = {};
+    S.history.sessions.concat(Object.values(S.pending.sessions)).forEach((r) => (info[r.Session] = r));
     return [...by.values()]
-      .map((s) => Object.assign(s, { length: lens[s.session] || null }))
+      .map((s) => Object.assign(s, { length: info[s.session] ? num(info[s.session]['Length (min)']) : null }))
       .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
   }
 
@@ -747,129 +936,181 @@
     sessions.forEach((s) => {
       if (!lastByDay[s.day]) lastByDay[s.day] = s.date;
     });
-    const days = DAYS.map(
-      (d) => `<button class="day" data-action="start" data-day="${d}">
+    const days = DAYS.map((d) => {
+      const n = (S.library.days[d] || []).reduce((a, it) => a + it.sets * it.names.length, 0);
+      return `<button class="day" data-action="start" data-day="${d}">
         <span class="day-name">${d}</span>
-        <span class="muted small">${lastByDay[d] ? 'Last ' + esc(daysAgo(lastByDay[d])) : 'Not done yet'}</span>
-      </button>`
-    ).join('');
+        <span class="muted small">${n} sets · ${lastByDay[d] ? 'last ' + esc(daysAgo(lastByDay[d])) : 'not done yet'}</span>
+      </button>`;
+    }).join('');
     const recent = sessions.slice(0, 8).map(
       (s) => `<li><div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}</span></div>
         <div class="muted small">${s.sets} sets${s.length ? ` · ${s.length} min` : ''}</div></li>`
     ).join('');
-    return `<header class="top"><div><h1>Start a workout</h1><div class="syncline">${syncText()}</div></div></header>
+    return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start a workout</h1><div class="syncline">${syncText()}</div></div></div></header>
       <div class="day-grid">${days}</div>
       <button class="btn wide" data-action="start" data-day="Other">Empty workout</button>
       ${recent ? `<h2>Recent workouts</h2><ul class="list">${recent}</ul>` : ''}`;
+  }
+
+  function statusHtml() {
+    const c = S.current;
+    const run = runningSet();
+    if (run) {
+      const it = c.items[run.k];
+      return `<div id="status" class="status run">
+        <div class="st-main"><span class="st-label">Set in progress · ${esc(it.name)} ${setNo(run.k, run.i)}</span><b id="st-time" class="st-time"></b></div>
+        <button class="btn small solid" data-action="end-running">End set</button>
+      </div>`;
+    }
+    if (!c.lastEnd) return '<div id="status" hidden></div>';
+    if (!c.restCountdown) {
+      return `<div id="status" class="status">
+        <div class="st-main"><span class="st-label">Rest</span><b id="st-time" class="st-time"></b><span class="muted small">superset: next exercise</span></div>
+      </div>`;
+    }
+    return `<div id="status" class="status">
+        <div class="st-main"><span class="st-label">Rest</span><b id="st-time" class="st-time"></b><span id="st-target" class="st-target"></span>
+          <div class="bar"><div id="st-bar"></div></div></div>
+        <button class="btn small" data-action="rest-add">+30s</button>
+      </div>`;
   }
 
   function workoutView() {
     const c = S.current;
     let done = 0;
     let total = 0;
-    c.blocks.forEach((b) =>
-      b.names.forEach((n) => {
-        total += c.ex[n].sets.length;
-        done += c.ex[n].sets.filter((s) => s.done).length;
-      })
-    );
+    forEachSet((k, i, s) => {
+      total++;
+      if (s.end) done++;
+    });
     return `<div class="sticky">
         <header class="top">
           <div><h1>${esc(c.day)}</h1><div class="sub"><span id="wclock"></span> · ${done}/${total} sets</div></div>
           <button class="btn primary" data-action="finish">Finish</button>
         </header>
-        <div id="rest" class="rest" hidden>
-          <div class="rest-info"><div id="resttext"></div><div class="bar"><div id="restbar"></div></div></div>
-          <button class="btn small" data-action="rest-add">+30s</button>
-          <button class="btn small" data-action="rest-skip">Skip</button>
-        </div>
+        ${statusHtml()}
       </div>
       ${c.blocks.map(blockHtml).join('')}
       <div class="add-ex">
-        <input id="exsearch" type="search" placeholder="Add an exercise" autocomplete="off" autocorrect="off" enterkeyhint="search" aria-label="Add an exercise">
+        <input id="exsearch" type="search" placeholder="Add any exercise, or create a new one" autocomplete="off" autocorrect="off" enterkeyhint="search" aria-label="Add an exercise">
         <div id="exresults" class="results"></div>
       </div>
       <p class="syncline center">${syncText()}</p>
       ${S.modal === 'finish' ? finishModal() : ''}`;
   }
 
-  function lastLine(n, prefix) {
-    const last = lastOf(n);
-    const label = prefix ? `${esc(n)}: ` : '';
+  function lastLine(k, prefix) {
+    const it = S.current.items[k];
+    const last = lastOf(k);
+    const label = prefix ? `${esc(it.name)}: ` : '';
     if (!last) return prefix ? `${label}<span class="muted">no history yet</span>` : '';
-    return `${label}Last time (${esc(daysAgo(last.date))}): ${esc(summary(last.entries, exDef(n)))}`;
+    // Only the sets this card covers (matters when an exercise appears twice in a day).
+    const nos = it.sets.map((s, i) => setNo(k, i));
+    let entries = last.entries.filter((e) => nos.includes(e.set));
+    if (!entries.length) entries = last.entries;
+    return `${label}Last time (${esc(daysAgo(last.date))}): ${esc(summary(entries, exDef(it.name)))}`;
+  }
+
+  function noteHtml(name, compact) {
+    if (S.editingNote === name) {
+      return `<div class="note-edit">
+        <textarea id="note-input" rows="3" placeholder="Seat 4, back pad 2, handles on the inside">${esc(noteOf(name))}</textarea>
+        <div class="row-btns"><button class="btn small primary" data-action="note-save" data-name="${esc(name)}">Save note</button>
+        <button class="btn small ghost" data-action="note-cancel">Cancel</button></div></div>`;
+    }
+    const n = noteOf(name);
+    if (n) return `<button class="note${compact ? ' compact' : ''}" data-action="note-edit" data-name="${esc(name)}">${ICON.pin}<span>${esc(n)}</span></button>`;
+    return compact ? '' : `<button class="note-add" data-action="note-edit" data-name="${esc(name)}">+ Add a note (seat, settings…)</button>`;
   }
 
   function blockHtml(b) {
     const c = S.current;
     const open = c.open === b.id;
-    const sup = b.names.length > 1;
+    const sup = b.keys.length > 1;
     let done = 0;
     let total = 0;
-    b.names.forEach((n) => {
-      total += c.ex[n].sets.length;
-      done += c.ex[n].sets.filter((s) => s.done).length;
-    });
+    b.keys.forEach((k) =>
+      c.items[k].sets.forEach((s) => {
+        total++;
+        if (s.end) done++;
+      })
+    );
+    const names = b.keys.map((k) => c.items[k].name);
+    const runningHere = b.keys.some((k) => c.items[k].sets.some((s) => s.start && !s.end));
     const head = `<button class="card-head" data-action="toggle" data-block="${b.id}" aria-expanded="${open}">
-        <span class="card-title">${sup ? '<span class="tag">Superset</span>' : ''}<span>${esc(b.names.join(' + '))}</span></span>
-        <span class="count ${total && done === total ? 'ok' : ''}">${done}/${total}</span>
+        <span class="card-title">${sup ? '<span class="tag">Superset</span>' : ''}<span>${esc(names.join(' + '))}</span></span>
+        <span class="count ${runningHere ? 'live' : total && done === total ? 'ok' : ''}">${runningHere ? 'live' : `${done}/${total}`}</span>
       </button>`;
     if (!open) {
-      const lines = b.names.map((n) => lastLine(n, sup)).filter(Boolean).join('<br>');
-      return `<section class="card" id="b-${b.id}">${head}${lines ? `<div class="last muted small">${lines}</div>` : ''}</section>`;
+      const lines = b.keys.map((k) => lastLine(k, sup)).filter(Boolean).join('<br>');
+      const notes = [...new Set(names)].map((n) => noteHtml(n, true)).join('');
+      return `<section class="card" id="b-${b.id}">${head}<div class="card-peek">${lines ? `<div class="last muted small">${lines}</div>` : ''}${notes}</div></section>`;
     }
     let body = '';
-    b.names.forEach((n) => {
-      const def = exDef(n);
-      if (def.attachments) {
-        const opts = def.attachments.slice();
-        const v = c.ex[n].variation;
-        if (v && !opts.includes(v)) opts.push(v);
-        body += `<label class="var-row"><span>${sup ? esc(n) + ' grip' : 'Attachment'}</span><select data-var="${esc(n)}">${opts
-          .map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`)
-          .join('')}<option value="__other">Other…</option></select></label>`;
+    if (sup) {
+      const without = [];
+      [...new Set(names)].forEach((n) => {
+        if (noteOf(n) || S.editingNote === n) body += `<div class="sub-name">${esc(n)}</div>${noteHtml(n)}`;
+        else without.push(n);
+      });
+      if (without.length) {
+        body += `<div class="note-links">${without
+          .map((n) => `<button class="link" data-action="note-edit" data-name="${esc(n)}">+ ${esc(n)} note</button>`)
+          .join('')}</div>`;
       }
+    } else {
+      body += noteHtml(names[0]);
+    }
+    b.keys.forEach((k) => {
+      const it = c.items[k];
+      const def = exDef(it.name);
+      if (!hasVariations(def)) return;
+      const opts = def.variations.map((v) => v.name);
+      if (it.variation && !opts.includes(it.variation)) opts.push(it.variation);
+      body += `<label class="var-row"><span>${sup ? esc(it.name) + ' ' : ''}${esc((def.label || 'Type').toLowerCase())}</span><select data-var="${k}">${opts
+        .map((o) => `<option ${o === it.variation ? 'selected' : ''}>${esc(o)}</option>`)
+        .join('')}<option value="__other">Other…</option></select></label>`;
     });
-    const lines = b.names.map((n) => lastLine(n, sup) || '<span class="muted">No history yet</span>').join('<br>');
+    const lines = b.keys.map((k) => lastLine(k, sup) || '<span class="muted">No history yet</span>').join('<br>');
     body += `<div class="last small">${lines}</div>`;
     if (sup) {
-      const rounds = Math.max(0, ...b.names.map((n) => c.ex[n].sets.length));
+      const rounds = Math.max(0, ...b.keys.map((k) => c.items[k].sets.length));
       for (let r = 0; r < rounds; r++) {
         body += `<div class="round-label muted small">Round ${r + 1}</div>`;
-        b.names.forEach((n) => {
-          if (c.ex[n].sets[r]) body += setRowHtml(n, r, n);
+        b.keys.forEach((k) => {
+          if (c.items[k].sets[r]) body += setRowHtml(k, r, c.items[k].name);
         });
       }
     } else {
-      const n = b.names[0];
-      const def = exDef(n);
-      if (!def.bodyweight) {
-        body += def.oneArm
-          ? '<div class="set-head onearm"><span></span><span>kg</span><span>Left reps</span><span>Right reps</span><span></span></div>'
-          : '<div class="set-head normal"><span></span><span>kg</span><span>Reps</span><span></span></div>';
-      } else {
-        body += '<div class="set-head bw"><span></span><span>Type</span><span>kg / band</span><span>Reps</span><span></span></div>';
-      }
-      c.ex[n].sets.forEach((s, i) => (body += setRowHtml(n, i)));
+      const k = b.keys[0];
+      const def = itemDef(k);
+      if (def.bodyweight) body += '<div class="set-head bw"><span></span><span>Type</span><span>kg / band</span><span>Reps</span><span></span></div>';
+      else if (oneArm(k)) body += '<div class="set-head onearm"><span></span><span>kg</span><span>Left</span><span>Right</span><span></span></div>';
+      else body += '<div class="set-head normal"><span></span><span>kg</span><span>Reps</span><span></span></div>';
+      c.items[k].sets.forEach((s, i) => (body += setRowHtml(k, i)));
     }
     body += `<div class="card-actions">
         <button class="btn small" data-action="add-set" data-block="${b.id}">+ ${sup ? 'Add round' : 'Add set'}</button>
         <button class="btn small ghost" data-action="remove-set" data-block="${b.id}">Remove last</button>
         <button class="btn small ghost danger" data-action="remove-block" data-block="${b.id}">Remove exercise</button>
       </div>`;
-    return `<section class="card" id="b-${b.id}">${head}<div class="card-body">${body}</div></section>`;
+    return `<section class="card open" id="b-${b.id}">${head}<div class="card-body">${body}</div></section>`;
   }
 
-  function setRowHtml(n, i, label) {
-    const def = exDef(n);
-    const s = S.current.ex[n].sets[i];
-    const ph = placeholder(n, i);
-    const a = `data-ex="${esc(n)}" data-i="${i}"`;
-    const input = (f, v, p, mode, aria) =>
-      `<input data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}">`;
-    const type = def.bodyweight ? 'bw' : def.oneArm ? 'onearm' : 'normal';
-    let h = `<div class="set-row ${type}${label ? ' labeled' : ''}${s.done ? ' done' : ''}">`;
-    h += `<span class="set-no">${label ? esc(label) : i + 1}</span>`;
+  function setRowHtml(k, i, label) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const s = it.sets[i];
+    const arm = oneArm(k);
+    const ph = placeholder(k, i);
+    const a = `data-k="${k}" data-i="${i}"`;
+    const input = (f, v, p, mode, aria, need) =>
+      `<input class="${need ? 'need' : ''}" data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}">`;
+    const type = def.bodyweight ? 'bw' : arm ? 'onearm' : 'normal';
+    const state = s.end ? ' done' : s.start ? ' running' : '';
+    let h = `<div class="set-row ${type}${label ? ' labeled' : ''}${state}">`;
+    h += `<span class="set-no">${label ? esc(label) : setNo(k, i)}</span>`;
     if (def.bodyweight) {
       h += `<select data-f="mode" ${a} aria-label="Set type">${[
         ['Bodyweight', 'BW'],
@@ -885,50 +1126,54 @@
     } else {
       h += input('kg', s.kg, ph.kg, 'decimal', 'kg');
     }
-    h += input('reps', s.reps, ph.reps, 'numeric', def.oneArm ? 'Left reps' : 'Reps');
-    if (def.oneArm) h += input('repsR', s.repsR, ph.repsR, 'numeric', 'Right reps');
-    h += `<button class="tick ${s.done ? 'on' : ''}" data-action="tick" ${a} aria-label="${s.done ? 'Undo set' : 'Set done'}">${ICON.check}</button></div>`;
-    if (s.done) h += markerHtml(n, i);
+    h += input('reps', s.reps, ph.reps, 'numeric', arm ? 'Left reps' : 'Reps', s.end && num(s.reps) == null);
+    if (arm) h += input('repsR', s.repsR, ph.repsR, 'numeric', 'Right reps', s.end && num(s.repsR) == null);
+    if (s.end) h += `<button class="sbtn done" data-action="set-btn" ${a} aria-label="Done. Tap twice to undo">${ICON.check}</button>`;
+    else if (s.start) h += `<button class="sbtn run" data-action="set-btn" ${a}><span>End</span><span class="rt" id="rt-${s.id}"></span></button>`;
+    else h += `<button class="sbtn" data-action="set-btn" ${a}>Start</button>`;
+    h += '</div>';
+    if (s.end) h += metaHtml(k, i);
     return h;
   }
 
-  function markerHtml(n, i) {
-    const m = compareSet(n, i);
-    if (!m) return '';
+  function metaHtml(k, i) {
+    const s = S.current.items[k].sets[i];
+    const m = compareSet(k, i);
     const one = (x, side) =>
       x
         ? `<span class="mk ${x.dir > 0 ? 'up' : x.dir < 0 ? 'down' : 'same'}">${side}${x.dir > 0 ? '▲' : x.dir < 0 ? '▼' : '='} ${esc(x.text)}</span>`
         : '';
-    const inner = m.one ? one(m.one, '') : one(m.L, 'L ') + one(m.R, 'R ');
-    return inner ? `<div class="markers">${inner}<span class="muted">vs last time</span></div>` : '';
+    let inner = m ? (m.one ? one(m.one, '') : one(m.L, 'L ') + one(m.R, 'R ')) : '';
+    const bits = [];
+    if (s.start) bits.push(`set ${clock((new Date(s.end) - new Date(s.start)) / 1000)}`);
+    if (s.rest != null) bits.push(`rest ${clock(s.rest)}`);
+    if (bits.length) inner += `<span class="muted">${bits.join(' · ')}</span>`;
+    return inner ? `<div class="markers">${inner}</div>` : '';
   }
 
   function finishModal() {
-    const c = S.current;
-    let sets = 0;
+    const st = sessionStats();
     let ups = 0;
-    c.blocks.forEach((b) =>
-      b.names.forEach((n) =>
-        c.ex[n].sets.forEach((s, i) => {
-          if (!s.done) return;
-          sets++;
-          const m = compareSet(n, i);
-          if (m && [m.one, m.L, m.R].some((x) => x && x.dir > 0)) ups++;
-        })
-      )
-    );
-    const mins = c.start ? Math.max(1, Math.round((Date.now() - new Date(c.start)) / 60000)) : 0;
+    forEachSet((k, i, s) => {
+      if (!s.end) return;
+      const m = compareSet(k, i);
+      if (m && [m.one, m.L, m.R].some((x) => x && x.dir > 0)) ups++;
+    });
+    const mins = st.first ? Math.max(1, Math.round((st.last - st.first) / 60000)) : 0;
+    const run = runningSet();
     return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
-      <h2 id="mt">Finish ${esc(c.day)}?</h2>
+      <h2 id="mt">Finish ${esc(S.current.day)}?</h2>
       <div class="stats">
         <div><b>${mins}</b><span>minutes</span></div>
-        <div><b>${sets}</b><span>sets</span></div>
+        <div><b>${st.sets}</b><span>sets</span></div>
         <div><b>${ups}</b><span>beat last time</span></div>
+        <div><b>${st.avgRest != null ? clock(st.avgRest) : '–'}</b><span>average rest</span></div>
       </div>
-      ${sets ? '' : '<p class="muted">No sets ticked off, so nothing will be saved.</p>'}
-      <button class="btn primary wide" data-action="save-finish">${sets ? 'Save workout' : 'Close workout'}</button>
+      ${run ? '<p class="muted small">The set that’s running will be ended now.</p>' : ''}
+      ${st.sets || run ? '' : '<p class="muted">No sets finished, so nothing will be saved.</p>'}
+      <button class="btn primary wide" data-action="save-finish">${st.sets || run ? 'Save workout' : 'Close workout'}</button>
       <button class="btn wide" data-action="modal-close">Keep going</button>
-      ${sets ? '<button class="btn ghost danger wide" data-action="discard">Discard workout</button>' : ''}
+      ${st.sets ? '<button class="btn ghost danger wide" data-action="discard">Discard workout</button>' : ''}
     </div></div>`;
   }
 
@@ -943,15 +1188,21 @@
     if (!q) return '';
     const words = q.toLowerCase().split(/\s+/);
     const names = allExerciseNames();
+    const inWorkout = new Set(S.current ? Object.values(S.current.items).map((it) => it.name) : []);
     const hits = names.filter((n) => words.every((w) => n.toLowerCase().includes(w))).slice(0, 8);
-    let h = hits.map((n) => `<button class="result" data-action="add-ex" data-name="${esc(n)}">${esc(n)}</button>`).join('');
+    let h = hits
+      .map(
+        (n) =>
+          `<button class="result" data-action="add-ex" data-name="${esc(n)}">${esc(n)}${inWorkout.has(n) ? ' <span class="muted small">· add again</span>' : ''}</button>`
+      )
+      .join('');
     if (!names.some((n) => n.toLowerCase() === q.toLowerCase())) {
-      h += `<button class="result create" data-action="create-ex" data-name="${esc(q)}">Create “${esc(q)}”</button>`;
+      h += `<button class="result create" data-action="create-ex" data-name="${esc(q)}">Create new exercise “${esc(q)}”</button>`;
     }
     return h;
   }
 
-  // Progress
+  // Exercises tab: notes, progress chart and history for one exercise
   function exercisesWithHistory() {
     const latest = {};
     allSets().forEach((r) => {
@@ -1019,31 +1270,32 @@
     return s + '</svg>';
   }
 
-  function progressView() {
-    let h = '<header class="top"><h1>Progress</h1></header>';
-    const names = exercisesWithHistory();
-    if (!names.length) {
-      return h + '<div class="empty"><h2>Your progress shows up here</h2><p class="muted">After your first workout, each exercise gets its own chart.</p></div>';
-    }
-    const P = S.progress;
-    if (!P.name || !names.includes(P.name)) {
-      P.name = names[0];
+  function exercisesView() {
+    let h = '<header class="top"><h1>Exercises</h1></header>';
+    const recent = exercisesWithHistory();
+    const all = allExerciseNames();
+    const P = S.page;
+    if (!P.name || !all.includes(P.name)) {
+      P.name = recent[0] || all[0];
       P.variation = '';
     }
     const def = exDef(P.name);
-    h += `<select class="big-select" data-progress="name" aria-label="Exercise">${names
-      .map((n) => `<option ${n === P.name ? 'selected' : ''}>${esc(n)}</option>`)
-      .join('')}</select>`;
-    if (def.attachments) {
-      const vs = [...new Set(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation)).filter(Boolean))];
+    const opt = (n) => `<option ${n === P.name ? 'selected' : ''}>${esc(n)}</option>`;
+    h += `<select class="big-select" data-page="name" aria-label="Exercise">
+      ${recent.length ? `<optgroup label="Recently trained">${recent.slice(0, 12).map(opt).join('')}</optgroup>` : ''}
+      <optgroup label="All exercises">${all.filter((n) => !recent.slice(0, 12).includes(n)).map(opt).join('')}</optgroup></select>`;
+    h += `<section class="panel"><h2>Notes</h2>${noteHtml(P.name)}</section>`;
+    const vs = [...new Set((def.variations || []).map((v) => v.name).concat(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation))).filter(Boolean))];
+    if (!def.bodyweight && vs.length > 1) {
       if (!vs.includes(P.variation)) P.variation = '';
-      if (vs.length > 1) {
-        h += `<div class="chips">${['', ...vs]
-          .map((v) => `<button class="chip ${v === P.variation ? 'on' : ''}" data-action="pv" data-v="${esc(v)}">${v ? esc(v) : 'All grips'}</button>`)
-          .join('')}</div>`;
-      }
+      h += `<div class="chips">${['', ...vs]
+        .map((v) => `<button class="chip ${v === P.variation ? 'on' : ''}" data-action="pv" data-v="${esc(v)}">${v ? esc(v) : 'All'}</button>`)
+        .join('')}</div>`;
+    } else {
+      P.variation = '';
     }
     const sessions = historyFor(P.name, P.variation);
+    if (!sessions.length) return h + '<section class="panel"><p class="muted">No sets logged for this yet.</p></section>';
     const pts = sessions.map((s) => Object.assign({ date: s.date }, score(s.entries, def))).reverse();
     h += `<section class="panel"><div class="chart-title">${esc(pts[0].label)}</div>${chartSvg(pts)}<p class="muted small">${esc(pts[0].hint)}</p></section>`;
     h += `<h2>History</h2><ul class="list">${sessions
@@ -1051,8 +1303,10 @@
         const prev = sessions[i + 1];
         const d = prev ? score(s.entries, def).value - score(prev.entries, def).value : null;
         const mk = d == null ? '' : `<span class="mk ${d > 0 ? 'up' : d < 0 ? 'down' : 'same'}">${d > 0 ? '▲' : d < 0 ? '▼' : '='}</span>`;
-        const v = def.attachments && !P.variation && s.entries[0] && s.entries[0].variation ? ` · ${esc(s.entries[0].variation)}` : '';
-        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}</span>${mk}</div><div class="muted small">${esc(summary(s.entries, def))}</div></li>`;
+        const v = !def.bodyweight && !P.variation && s.entries[0] && s.entries[0].variation ? ` · ${esc(s.entries[0].variation)}` : '';
+        const ar = avgRest(s.entries);
+        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}</span>${mk}</div>
+          <div class="muted small">${esc(summary(s.entries, def))}${ar ? ` · rest ~${clock(ar)}` : ''}</div></li>`;
       })
       .join('')}</ul>`;
     return h;
@@ -1065,19 +1319,21 @@
       .join('');
     const dayLists = DAYS.map((d) => {
       const list = S.library.days[d];
+      const total = list.reduce((a, it) => a + it.sets * it.names.length, 0);
       const items = list
         .map((it, i) => {
-          const label = Array.isArray(it) ? it.join(' + ') : it;
-          return `<li><span>${esc(label)}</span>
-            <button class="icon-btn" data-action="lib-move" data-day="${d}" data-idx="${i}" data-delta="-1" aria-label="Move ${esc(label)} up">↑</button>
-            <button class="icon-btn" data-action="lib-move" data-day="${d}" data-idx="${i}" data-delta="1" aria-label="Move ${esc(label)} down">↓</button>
-            <button class="icon-btn" data-action="lib-remove" data-day="${d}" data-idx="${i}" aria-label="Remove ${esc(label)} from ${d}">✕</button></li>`;
+          const label = it.names.join(' + ');
+          const unit = it.names.length > 1 ? 'rounds' : 'sets';
+          const at = `data-day="${d}" data-idx="${i}"`;
+          return `<li><span class="lib-name">${esc(label)}</span>
+            <span class="stepper"><button class="icon-btn" data-action="lib-sets" ${at} data-delta="-1" aria-label="Fewer ${unit}">−</button><b title="${unit}">${it.sets}</b><button class="icon-btn" data-action="lib-sets" ${at} data-delta="1" aria-label="More ${unit}">+</button></span>
+            <button class="icon-btn" data-action="lib-move" ${at} data-delta="-1" aria-label="Move ${esc(label)} up">↑</button>
+            <button class="icon-btn" data-action="lib-move" ${at} data-delta="1" aria-label="Move ${esc(label)} down">↓</button>
+            <button class="icon-btn" data-action="lib-remove" ${at} aria-label="Remove ${esc(label)} from ${d}">✕</button></li>`;
         })
         .join('');
-      const inDay = new Set(list.flat());
-      const addable = allExerciseNames().filter((n) => !inDay.has(n));
-      return `<h3>${d}</h3><ul class="lib-list">${items}</ul>
-        <select data-addday="${d}" aria-label="Add an exercise to ${d}"><option value="">Add to ${d}…</option>${addable
+      return `<h3>${d} · ${total} sets</h3><ul class="lib-list">${items}</ul>
+        <select data-addday="${d}" aria-label="Add an exercise to ${d}"><option value="">Add to ${d}…</option>${allExerciseNames()
           .map((n) => `<option>${esc(n)}</option>`)
           .join('')}</select>`;
     }).join('');
@@ -1093,15 +1349,15 @@
       </section>
       <section class="panel">
         <h2>Rest timer</h2>
-        <label class="field">Default rest<select data-setting="restSec">${restOpts}</select></label>
-        <label class="check"><input type="checkbox" data-setting="sound" ${S.settings.sound ? 'checked' : ''}> Beep when rest is over</label>
+        <label class="field">Target rest<select data-setting="restSec">${restOpts}</select></label>
+        <label class="check"><input type="checkbox" data-setting="sound" ${S.settings.sound ? 'checked' : ''}> Beep when the target is reached</label>
         <label class="check"><input type="checkbox" data-setting="keepAwake" ${S.settings.keepAwake ? 'checked' : ''}> Keep the screen on during a workout</label>
-        <p class="muted small">Your phone can't beep while it's locked or showing another app, so keeping the screen on is what makes the beep work.</p>
+        <p class="muted small">Your phone can't beep while it's locked or showing another app, so keeping the screen on is what makes the beep work. Your actual rest is always recorded, from the end of one set to the start of the next.</p>
         <button class="btn small" data-action="test-sound">Test the beep</button>
       </section>
       <section class="panel">
-        <h2>Exercises for each day</h2>
-        <p class="muted small">Order here is the order they load in. Changes stay on this device.</p>
+        <h2>Your split</h2>
+        <p class="muted small">The order here is the order exercises load in, and the number is how many sets (rounds for a superset). Changes stay on this device.</p>
         ${dayLists}
       </section>
       <section class="panel">
@@ -1109,7 +1365,7 @@
         <label class="field">Name<input id="new-name" placeholder="Cable Fly" autocomplete="off"></label>
         <label class="check"><input type="checkbox" id="new-onearm"> One arm (log left and right reps)</label>
         <label class="check"><input type="checkbox" id="new-bw"> Bodyweight (BW, +kg or band)</label>
-        <label class="field">Attachments (optional, separated by commas)<input id="new-att" placeholder="Rope, Straight bar" autocomplete="off"></label>
+        <label class="field">Types or attachments (optional, separated by commas)<input id="new-var" placeholder="Rope, Straight bar" autocomplete="off"></label>
         <label class="field">Add to day<select id="new-day"><option value="">No day</option>${DAYS.map((d) => `<option>${d}</option>`).join('')}</select></label>
         <p id="new-err" class="err-text" role="alert"></p>
         <button class="btn primary" data-action="lib-new">Add exercise</button>
@@ -1124,26 +1380,26 @@
     t.textContent = msg;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
   }
 
   function armed(el, label) {
     if (el.dataset.armed) return true;
     el.dataset.armed = '1';
-    const old = el.textContent;
+    const old = el.innerHTML;
     el.textContent = label;
+    el.classList.add('armed');
     setTimeout(() => {
       if (el.isConnected) {
         delete el.dataset.armed;
-        el.textContent = old;
+        el.innerHTML = old;
+        el.classList.remove('armed');
       }
     }, 3000);
     return false;
   }
 
-  function blockById(id) {
-    return S.current && S.current.blocks.find((b) => b.id === id);
-  }
+  const blockById = (id) => S.current && S.current.blocks.find((b) => b.id === id);
 
   async function connect(btn) {
     const pass = ($('#pass').value || '').trim();
@@ -1175,6 +1431,7 @@
   const ACTIONS = {
     tab(el) {
       S.tab = el.dataset.tab;
+      S.editingNote = null;
       render();
       window.scrollTo(0, 0);
     },
@@ -1194,31 +1451,45 @@
         if (top < offset) window.scrollBy(0, top - offset - 8);
       }
     },
-    tick(el) {
-      tick(el.dataset.ex, +el.dataset.i, el);
+    'set-btn'(el) {
+      const k = el.dataset.k;
+      const i = +el.dataset.i;
+      const s = S.current.items[k].sets[i];
+      if (s.end) {
+        if (armed(el, 'Undo?')) undoSet(k, i);
+      } else if (s.start) endSet(k, i);
+      else startSet(k, i);
+    },
+    'end-running'() {
+      const run = runningSet();
+      if (run) endSet(run.k, run.i);
     },
     'add-set'(el) {
       const b = blockById(el.dataset.block);
       const c = S.current;
-      const target = Math.max(...b.names.map((n) => c.ex[n].sets.length)) + 1;
-      b.names.forEach((n) => {
-        while (c.ex[n].sets.length < target) c.ex[n].sets.push(newSet(n, c.ex[n].sets.length));
+      const target = Math.max(...b.keys.map((k) => c.items[k].sets.length)) + 1;
+      b.keys.forEach((k) => {
+        while (c.items[k].sets.length < target) c.items[k].sets.push(newSet(k, c.items[k].sets.length));
       });
+      requeueNames(b.keys.map((k) => c.items[k].name));
       persist();
       render();
+      scheduleSync();
     },
     'remove-set'(el) {
       const b = blockById(el.dataset.block);
       const c = S.current;
-      const max = Math.max(...b.names.map((n) => c.ex[n].sets.length));
+      const max = Math.max(...b.keys.map((k) => c.items[k].sets.length));
       if (!max) return;
-      b.names.forEach((n) => {
-        const sets = c.ex[n].sets;
+      b.keys.forEach((k) => {
+        const sets = c.items[k].sets;
         if (sets.length === max) {
           const s = sets.pop();
-          if (s.done) unqueueRows(rowIds(n, s));
+          if (s.end) unqueueRows(rowIds(k, s));
         }
       });
+      requeueNames(b.keys.map((k) => c.items[k].name));
+      queueSession();
       persist();
       render();
       scheduleSync();
@@ -1226,30 +1497,28 @@
     'remove-block'(el) {
       const b = blockById(el.dataset.block);
       const c = S.current;
-      const hasDone = b.names.some((n) => c.ex[n].sets.some((s) => s.done));
+      const hasDone = b.keys.some((k) => c.items[k].sets.some((s) => s.start || s.end));
       if (hasDone && !armed(el, 'Tap again to remove')) return;
-      b.names.forEach((n) => {
-        c.ex[n].sets.forEach((s) => s.done && unqueueRows(rowIds(n, s)));
-        if (!c.blocks.some((o) => o !== b && o.names.includes(n))) delete c.ex[n];
+      const names = b.keys.map((k) => c.items[k].name);
+      b.keys.forEach((k) => {
+        c.items[k].sets.forEach((s) => s.end && unqueueRows(rowIds(k, s)));
+        delete c.items[k];
       });
       c.blocks = c.blocks.filter((o) => o !== b);
       if (c.open === b.id) c.open = null;
+      requeueNames(names);
+      queueSession();
       persist();
       render();
       scheduleSync();
     },
     'rest-add'() {
       const c = S.current;
-      if (!c.restEnd) return;
-      const base = Math.max(c.restEnd, Date.now());
-      c.restTotal = Math.round((base + 30000 - (c.restEnd - c.restTotal * 1000)) / 1000);
-      c.restEnd = base + 30000;
-      c.restBeeped = false;
-      persist();
-      tickClock();
-    },
-    'rest-skip'() {
-      S.current.restEnd = null;
+      if (!c.lastEnd) return;
+      const el = (Date.now() - new Date(c.lastEnd)) / 1000;
+      const target = restTarget();
+      c.restExtra = (c.restExtra || 0) + (el > target ? Math.ceil(el - target) + 30 : 30);
+      c.beepedAt = null;
       persist();
       tickClock();
     },
@@ -1272,7 +1541,7 @@
       discardWorkout();
     },
     'add-ex'(el) {
-      const b = addBlock([el.dataset.name]);
+      const b = addBlock([el.dataset.name], null);
       persist();
       render();
       const card = document.getElementById('b-' + b.id);
@@ -1283,9 +1552,20 @@
       if (!S.library.exercises.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
         S.library.exercises.push({ name });
         saveLibrary();
-        toast(`Added ${name}. Change its type in Settings if needed.`);
+        toast(`Created ${name}. You can make it one-arm or add types in Settings.`);
       }
       ACTIONS['add-ex']({ dataset: { name } });
+    },
+    'note-edit'(el) {
+      S.editingNote = el.dataset.name;
+      render();
+    },
+    'note-cancel'() {
+      S.editingNote = null;
+      render();
+    },
+    'note-save'(el) {
+      saveNote(el.dataset.name, $('#note-input').value);
     },
     connect(el) {
       connect(el);
@@ -1307,7 +1587,7 @@
       S.settings.sound = was;
     },
     pv(el) {
-      S.progress.variation = el.dataset.v;
+      S.page.variation = el.dataset.v;
       render();
     },
     'lib-move'(el) {
@@ -1316,6 +1596,12 @@
       const j = i + +el.dataset.delta;
       if (j < 0 || j >= list.length) return;
       [list[i], list[j]] = [list[j], list[i]];
+      saveLibrary();
+      render();
+    },
+    'lib-sets'(el) {
+      const it = S.library.days[el.dataset.day][+el.dataset.idx];
+      it.sets = Math.max(1, Math.min(20, it.sets + +el.dataset.delta));
       saveLibrary();
       render();
     },
@@ -1338,14 +1624,17 @@
       const ex = { name };
       if ($('#new-onearm').checked) ex.oneArm = true;
       if ($('#new-bw').checked) ex.bodyweight = true;
-      const att = $('#new-att')
+      const vars = $('#new-var')
         .value.split(',')
         .map((x) => x.trim())
         .filter(Boolean);
-      if (att.length) ex.attachments = att;
+      if (vars.length) {
+        ex.variations = vars.map((n) => ({ name: n }));
+        ex.label = 'Type';
+      }
       S.library.exercises.push(ex);
       const day = $('#new-day').value;
-      if (day) S.library.days[day].push(name);
+      if (day) S.library.days[day].push({ names: [name], sets: 3 });
       saveLibrary();
       toast(`Added ${name}`);
       render();
@@ -1371,64 +1660,68 @@
     }
     const f = el.dataset.f;
     if (!f || f === 'mode' || !S.current) return;
-    el.classList.remove('err');
-    const n = el.dataset.ex;
+    const k = el.dataset.k;
     const i = +el.dataset.i;
-    const s = S.current.ex[n] && S.current.ex[n].sets[i];
+    const it = S.current.items[k];
+    const s = it && it.sets[i];
     if (!s) return;
     s[f] = el.value;
+    if (el.value) el.classList.remove('need');
     persist();
-    if (s.done) requeueSoon(n, i);
+    if (s.end) requeueSoon(k, i);
   });
 
   document.addEventListener('change', (e) => {
     const el = e.target;
     if (el.dataset.f === 'mode' && S.current) {
-      const n = el.dataset.ex;
+      const k = el.dataset.k;
       const i = +el.dataset.i;
-      const s = S.current.ex[n].sets[i];
+      const s = S.current.items[k].sets[i];
       s.mode = el.value;
       if (s.mode === 'Band' && !s.band) s.band = 'Purple';
       persist();
-      if (s.done) {
-        queueRows(rowsFor(n, i));
+      if (s.end) {
+        queueRows(rowsFor(k, i));
         scheduleSync();
       }
       render();
     } else if (el.dataset.var && S.current) {
-      const n = el.dataset.var;
-      const ex = S.current.ex[n];
+      const k = el.dataset.var;
+      const it = S.current.items[k];
       let v = el.value;
       if (v === '__other') {
-        v = (window.prompt('Attachment name') || '').trim();
+        v = (window.prompt('Name of the type or attachment') || '').trim();
         if (!v) {
           render();
           return;
         }
-        const def = exDef(n);
-        if (def.attachments && !def.attachments.includes(v)) {
-          def.attachments.push(v);
+        const def = exDef(it.name);
+        if (!varDef(def, v)) {
+          def.variations = (def.variations || []).concat({ name: v });
           saveLibrary();
         }
       }
-      ex.variation = v;
-      ex.sets.forEach((s, i) => s.done && queueRows(rowsFor(n, i)));
+      const doneIdx = it.sets.map((s, i) => (s.end ? i : -1)).filter((i) => i >= 0);
+      unqueueRows(doneIdx.reduce((a, i) => a.concat(rowIds(k, it.sets[i])), []));
+      it.variation = v;
+      doneIdx.forEach((i) => queueRows(rowsFor(k, i)));
       persist();
       invalidate();
       render();
       scheduleSync();
     } else if (el.dataset.setting) {
-      const k = el.dataset.setting;
-      S.settings[k] = el.type === 'checkbox' ? el.checked : +el.value;
+      const key = el.dataset.setting;
+      S.settings[key] = el.type === 'checkbox' ? el.checked : +el.value;
       saveSettings();
-      if (k === 'keepAwake') keepAwake(!!S.current);
+      if (key === 'keepAwake') keepAwake(!!S.current);
     } else if (el.dataset.addday) {
       if (!el.value) return;
-      S.library.days[el.dataset.addday].push(el.value);
+      S.library.days[el.dataset.addday].push({ names: [el.value], sets: 3 });
       saveLibrary();
       render();
-    } else if (el.dataset.progress) {
-      S.progress = { name: el.value, variation: '' };
+    } else if (el.dataset.page) {
+      S.page = { name: el.value, variation: '' };
+      S.editingNote = null;
       render();
     }
   });
@@ -1459,10 +1752,11 @@
   async function init() {
     try {
       const h = await idb.get('history');
-      if (h && Array.isArray(h.sets)) S.history = h;
+      if (h && Array.isArray(h.sets)) S.history = Object.assign({ sets: [], sessions: [], notes: [] }, h);
     } catch (e) {}
     invalidate();
     render();
+    if (notice) toast(notice);
     if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     if (S.current) keepAwake(true);
