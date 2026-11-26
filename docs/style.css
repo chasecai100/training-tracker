@@ -250,8 +250,15 @@ input[type="checkbox"] { width: 22px; height: 22px; padding: 0; accent-color: va
 .sbtn.done { background: #f4f4f5; border-color: #f4f4f5; color: #111; }
 .sbtn.done svg { width: 22px; height: 22px; }
 .sbtn.armed { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 14px; }
-.markers { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: -4px 0 8px 34px; font-size: 12.5px; }
-.labeled + .markers { margin-left: 68px; }
+.markers { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: -4px 0 8px 34px; font-size: 12.5px; }
+.markers.indent { margin-left: 68px; }
+.drop-add { font-size: 13px; color: var(--accent-text); padding: 2px 0; margin-left: auto; font-weight: 650; }
+.drop-row { display: grid; gap: 8px; align-items: center; margin: -2px 0 8px; }
+.drop-row input { height: 38px; font-size: 16px; text-align: center; padding: 0 4px; background: var(--card2); }
+.drop-row.done input { background-color: var(--ok-bg); }
+.drop-mark { color: var(--accent-text); text-align: center; font-weight: 700; }
+.labeled .drop-mark { text-align: right; padding-right: 6px; }
+.drop-x { appearance: none; border: 0; background: none; color: var(--muted); font-size: 15px; height: 38px; cursor: pointer; }
 .mk.up { color: var(--up); }
 .mk.down { color: var(--down); }
 .mk.same { color: var(--muted); }

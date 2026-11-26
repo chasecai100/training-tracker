@@ -5,8 +5,9 @@
 // variations: choices shown in a picker on the exercise (label names the picker).
 //   A variation with oneArm: true switches that exercise to left/right reps.
 //   Each variation gets its own progress line.
+// dropLast: the last set always starts with drop-set rows.
 window.TT_DEFAULTS = {
-  version: 2,
+  version: 3,
   exercises: [
     { name: 'Machine Press', label: 'Machine', variations: [{ name: 'Weight stack' }, { name: 'Plate-loaded' }] },
     { name: 'Incline Bench' },
@@ -15,7 +16,7 @@ window.TT_DEFAULTS = {
     { name: 'Pec Deck' },
     { name: 'Shoulder Press', label: 'Type', variations: [{ name: 'Smith' }, { name: 'Dumbbell' }] },
     { name: 'Dumbbell Pullover' },
-    { name: 'Triceps', label: 'Type', variations: [{ name: 'Overhead extension' }] },
+    { name: 'Triceps', label: 'Type', variations: [{ name: 'Overhead extension' }], dropLast: true },
     { name: 'Pull-up', bodyweight: true },
     { name: 'Chin-up', bodyweight: true },
     { name: 'Seated Row', label: 'Attachment', variations: [{ name: 'Close MAG grip' }, { name: 'Medium MAG grip' }] },
@@ -27,7 +28,12 @@ window.TT_DEFAULTS = {
       variations: [{ name: 'Close MAG grip' }, { name: 'Medium MAG grip' }, { name: 'Single arm', oneArm: true }],
     },
     { name: 'Reverse Fly', label: 'Type', variations: [{ name: 'Double' }, { name: 'Single arm', oneArm: true }] },
-    { name: 'Biceps', label: 'Type', variations: [{ name: 'Cable' }, { name: 'Supported single arm', oneArm: true }] },
+    {
+      name: 'Biceps',
+      label: 'Type',
+      variations: [{ name: 'Cable' }, { name: 'Supported single arm', oneArm: true }],
+      dropLast: true,
+    },
     { name: 'Face Pull' },
     { name: 'Leg Press' },
     { name: 'Calves' },

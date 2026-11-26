@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
   // Exercise names from the first version's list, used once to tell them apart from ones you added.
   const V1_NAMES = [
@@ -119,6 +119,14 @@
 
   function loadLibrary() {
     let lib = load(KEYS.library, null);
+    if (lib && lib.version === 2) {
+      // Version 3 added drop sets: keep your split, switch them on for triceps and biceps.
+      ['Triceps', 'Biceps'].forEach((n) => {
+        const e = lib.exercises.find((x) => x.name === n);
+        if (e) e.dropLast = true;
+      });
+      lib.version = 3;
+    }
     if (!lib || lib.version !== DEF.version) {
       const custom =
         lib && Array.isArray(lib.exercises)
@@ -143,6 +151,7 @@
       notice = 'The app was updated, so your open workout was closed. Sets you had ticked off are saved.';
       return null;
     }
+    if (c) Object.values(c.items).forEach((it) => it.sets.forEach((s) => Array.isArray(s.drops) || (s.drops = [])));
     return c;
   }
 
@@ -215,24 +224,33 @@
     return out;
   }
 
-  /** Turns rows (one per side for one-arm sets) into one entry per set. */
+  /** Turns rows (one per side for one-arm sets, one per drop) into one entry per set. */
   function groupSets(rows) {
     const by = new Map();
     rows
       .slice()
-      .sort((a, b) => num(a.Set) - num(b.Set))
+      .sort((a, b) => num(a.Set) - num(b.Set) || (num(a.Drop) || 0) - (num(b.Drop) || 0))
       .forEach((r) => {
         const k = num(r.Set);
-        const e = by.get(k) || { set: k, kg: num(r.kg), variation: r.Variation || '', reps: null, repsR: null, rest: null };
+        const e = by.get(k) || { set: k, kg: null, variation: '', reps: null, repsR: null, rest: null, drops: [] };
+        by.set(k, e);
+        const dn = num(r.Drop) || 0;
+        if (dn > 0) {
+          const d = e.drops[dn - 1] || (e.drops[dn - 1] = { kg: null, reps: null, repsR: null });
+          if (r.Side === 'R') d.repsR = num(r.Reps);
+          else d.reps = num(r.Reps);
+          if (d.kg == null) d.kg = num(r.kg);
+          return;
+        }
+        if (!e.variation) e.variation = r.Variation || '';
         if (r.Side === 'R') e.repsR = num(r.Reps);
         else {
           e.reps = num(r.Reps);
           e.rest = num(r['Rest (s)']);
         }
         if (e.kg == null) e.kg = num(r.kg);
-        by.set(k, e);
       });
-    return [...by.values()];
+    return [...by.values()].map((e) => Object.assign(e, { drops: e.drops.filter(Boolean) }));
   }
 
   function weightLabel(e, def) {
@@ -248,11 +266,13 @@
     const r = (x) => (x == null ? '–' : x);
     return e.repsR != null ? `L${r(e.reps)}/R${r(e.repsR)}` : `${r(e.reps)}`;
   }
+  const dropsLabel = (e) =>
+    e.drops && e.drops.length ? ' ↓ ' + e.drops.map((d) => `${d.kg != null ? fmt(d.kg) + '×' : ''}${repsLabel(d)}`).join(' ↓ ') : '';
   function summary(entries, def) {
     if (!entries.length) return '';
     const ws = entries.map((e) => weightLabel(e, def));
-    if (ws.every((w) => w === ws[0])) return `${ws[0] ? ws[0] + ' × ' : ''}${entries.map(repsLabel).join(', ')}`;
-    return entries.map((e, i) => `${ws[i] ? ws[i] + ' × ' : ''}${repsLabel(e)}`).join(', ');
+    if (ws.every((w) => w === ws[0])) return `${ws[0] ? ws[0] + ' × ' : ''}${entries.map((e) => repsLabel(e) + dropsLabel(e)).join(', ')}`;
+    return entries.map((e, i) => `${ws[i] ? ws[i] + ' × ' : ''}${repsLabel(e)}${dropsLabel(e)}`).join(', ');
   }
   function avgRest(entries) {
     const r = entries.map((e) => e.rest).filter((x) => x != null && x > 0);
@@ -333,7 +353,7 @@
   function newSet(k, i) {
     const it = S.current.items[k];
     const def = exDef(it.name);
-    const s = { id: uid(), kg: '', reps: '', repsR: '', mode: 'Bodyweight', band: 'Purple', start: null, end: null, rest: null };
+    const s = { id: uid(), kg: '', reps: '', repsR: '', mode: 'Bodyweight', band: 'Purple', start: null, end: null, rest: null, drops: [] };
     if (def.bodyweight) {
       const last = historyFor(it.name, '')[0];
       const no = setNo(k, i);
@@ -363,9 +383,42 @@
         count = Math.max(1, Math.min(last ? last.entries.length : 3, 8));
       }
       for (let i = 0; i < count; i++) c.items[k].sets.push(newSet(k, i));
+      addDefaultDrops(k);
     });
     if (open) c.open = b.id;
     return b;
+  }
+
+  // ---------- Drop sets ----------
+  const newDrop = () => ({ id: uid(), kg: '', reps: '', repsR: '' });
+  const canDrop = (k) => !itemDef(k).bodyweight;
+  const dropUntouched = (s) => !s.start && !s.end && (s.drops || []).every((d) => !d.kg && !d.reps && !d.repsR);
+
+  /** For exercises marked dropLast, give the last set as many drop rows as last time (3 the first time). */
+  function addDefaultDrops(k) {
+    const it = S.current.items[k];
+    if (!exDef(it.name).dropLast || !canDrop(k) || !it.sets.length) return;
+    const lastSet = it.sets[it.sets.length - 1];
+    if (lastSet.drops.length) return;
+    const p = entryFor(k, it.sets.length - 1);
+    const prevLast = lastOf(k) && lastOf(k).entries.filter((e) => e.drops.length).slice(-1)[0];
+    const n = (p && p.drops.length) || (prevLast && prevLast.drops.length) || 3;
+    for (let j = 0; j < n; j++) lastSet.drops.push(newDrop());
+  }
+
+  /** Weight and reps hints for a drop: last time's same drop, else carry on the step down. */
+  function dropPlaceholder(k, i, j) {
+    const s = S.current.items[k].sets[i];
+    const p = entryFor(k, i);
+    const pd = p && p.drops[j];
+    let kg = pd ? pd.kg : null;
+    if (kg == null && j > 0) {
+      const at = (jj) => (jj < 0 ? num(s.kg) ?? placeholder(k, i).kg : num(s.drops[jj].kg) ?? dropPlaceholder(k, i, jj).kg);
+      const a = at(j - 1);
+      const b = at(j - 2);
+      if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
+    }
+    return { kg, reps: pd ? pd.reps : null, repsR: pd ? pd.repsR : null };
   }
 
   function startWorkout(day) {
@@ -426,7 +479,10 @@
     return { one: cmp(kg, num(s.reps), p.kg, p.reps) };
   }
 
-  const rowIds = (k, s) => (oneArm(k) ? [s.id + '-L', s.id + '-R'] : [s.id]);
+  const sideIds = (k, base) => (oneArm(k) ? [base + '-L', base + '-R'] : [base]);
+  const dropBase = (s, d) => `${s.id}-${d.id}`;
+  /** Every sheet row id a set can own: its own row(s) plus one per drop. */
+  const rowIds = (k, s) => (s.drops || []).reduce((a, d) => a.concat(sideIds(k, dropBase(s, d))), sideIds(k, s.id));
 
   function rowsFor(k, i) {
     const c = S.current;
@@ -445,19 +501,46 @@
       Exercise: it.name,
       Variation: variationOf(k, s),
       Set: setNo(k, i),
+      Drop: '',
       kg: kg == null ? '' : kg,
       Start: hms(st),
       End: hms(en),
       Session: c.session,
     };
     const rest = s.rest == null ? '' : s.rest;
-    if (oneArm(k)) {
-      return [
-        Object.assign({}, base, { Side: 'L', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id + '-L' }),
-        Object.assign({}, base, { Side: 'R', Reps: num(s.repsR), 'Set (s)': '', 'Rest (s)': '', ID: s.id + '-R' }),
-      ];
-    }
-    return [Object.assign({}, base, { Side: '', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id })];
+    const arm = oneArm(k);
+    const rows = arm
+      ? [
+          Object.assign({}, base, { Side: 'L', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id + '-L' }),
+          Object.assign({}, base, { Side: 'R', Reps: num(s.repsR), 'Set (s)': '', 'Rest (s)': '', ID: s.id + '-R' }),
+        ]
+      : [Object.assign({}, base, { Side: '', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id })];
+    // Drops share the set's number and times; only drops with something typed are saved.
+    let n = 0;
+    (s.drops || []).forEach((d) => {
+      const dkg = num(d.kg);
+      const dr = num(d.reps);
+      const drR = num(d.repsR);
+      if (dkg == null && dr == null && drR == null) return;
+      n++;
+      const db = Object.assign({}, base, { Drop: n, kg: dkg == null ? '' : dkg, 'Set (s)': '', 'Rest (s)': '' });
+      const id = dropBase(s, d);
+      if (arm) {
+        rows.push(Object.assign({}, db, { Side: 'L', Reps: dr, ID: id + '-L' }));
+        rows.push(Object.assign({}, db, { Side: 'R', Reps: drR, ID: id + '-R' }));
+      } else rows.push(Object.assign({}, db, { Side: '', Reps: dr, ID: id }));
+    });
+    return rows;
+  }
+
+  /** Queues a finished set's rows, and removes rows it no longer has (emptied or removed drops). */
+  function syncSetRows(k, i) {
+    const s = S.current.items[k].sets[i];
+    const rows = rowsFor(k, i);
+    const keep = new Set(rows.map((r) => r.ID));
+    const stale = rowIds(k, s).filter((id) => !keep.has(id));
+    if (stale.length) unqueueRows(stale);
+    queueRows(rows);
   }
 
   function queueRows(rows) {
@@ -478,7 +561,7 @@
   /** Re-sends every finished set of these exercises (their set numbers may have shifted). */
   function requeueNames(names) {
     forEachSet((k, i, s) => {
-      if (s.end && names.includes(S.current.items[k].name)) queueRows(rowsFor(k, i));
+      if (s.end && names.includes(S.current.items[k].name)) syncSetRows(k, i);
     });
   }
 
@@ -539,7 +622,7 @@
       const it = S.current && S.current.items[k];
       const s = it && it.sets[i];
       if (s && s.end) {
-        queueRows(rowsFor(k, i));
+        syncSetRows(k, i);
         scheduleSync();
       }
     }, 800);
@@ -580,7 +663,7 @@
     c.restExtra = 0;
     c.beepedAt = null;
     unlockAudio();
-    queueRows(rowsFor(k, i));
+    syncSetRows(k, i);
     queueSession();
     persist();
     render();
@@ -1132,23 +1215,50 @@
     else if (s.start) h += `<button class="sbtn run" data-action="set-btn" ${a}><span>End</span><span class="rt" id="rt-${s.id}"></span></button>`;
     else h += `<button class="sbtn" data-action="set-btn" ${a}>Start</button>`;
     h += '</div>';
-    if (s.end) h += metaHtml(k, i);
+    (s.drops || []).forEach((d, j) => (h += dropRowHtml(k, i, j, label)));
+    h += footerHtml(k, i, label);
     return h;
   }
 
-  function metaHtml(k, i) {
+  function dropRowHtml(k, i, j, label) {
     const s = S.current.items[k].sets[i];
-    const m = compareSet(k, i);
-    const one = (x, side) =>
-      x
-        ? `<span class="mk ${x.dir > 0 ? 'up' : x.dir < 0 ? 'down' : 'same'}">${side}${x.dir > 0 ? '▲' : x.dir < 0 ? '▼' : '='} ${esc(x.text)}</span>`
-        : '';
-    let inner = m ? (m.one ? one(m.one, '') : one(m.L, 'L ') + one(m.R, 'R ')) : '';
-    const bits = [];
-    if (s.start) bits.push(`set ${clock((new Date(s.end) - new Date(s.start)) / 1000)}`);
-    if (s.rest != null) bits.push(`rest ${clock(s.rest)}`);
-    if (bits.length) inner += `<span class="muted">${bits.join(' · ')}</span>`;
-    return inner ? `<div class="markers">${inner}</div>` : '';
+    const d = s.drops[j];
+    const arm = oneArm(k);
+    const ph = dropPlaceholder(k, i, j);
+    const a = `data-k="${k}" data-i="${i}" data-d="${j}"`;
+    const input = (f, v, p, mode, aria) =>
+      `<input data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}">`;
+    let h = `<div class="drop-row ${arm ? 'onearm' : 'normal'}${label ? ' labeled' : ''}${s.end ? ' done' : ''}">`;
+    h += '<span class="drop-mark" aria-hidden="true">↳</span>';
+    h += input('kg', d.kg, ph.kg, 'decimal', `Drop ${j + 1} kg`);
+    h += input('reps', d.reps, ph.reps, 'numeric', arm ? `Drop ${j + 1} left reps` : `Drop ${j + 1} reps`);
+    if (arm) h += input('repsR', d.repsR, ph.repsR, 'numeric', `Drop ${j + 1} right reps`);
+    h += `<button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button></div>`;
+    return h;
+  }
+
+  /** The line under a set: progress vs last time, set and rest times, and "+ drop". */
+  function footerHtml(k, i, label) {
+    const it = S.current.items[k];
+    const s = it.sets[i];
+    let inner = '';
+    if (s.end) {
+      const m = compareSet(k, i);
+      const one = (x, side) =>
+        x
+          ? `<span class="mk ${x.dir > 0 ? 'up' : x.dir < 0 ? 'down' : 'same'}">${side}${x.dir > 0 ? '▲' : x.dir < 0 ? '▼' : '='} ${esc(x.text)}</span>`
+          : '';
+      inner += m ? (m.one ? one(m.one, '') : one(m.L, 'L ') + one(m.R, 'R ')) : '';
+      const bits = [];
+      if (s.start) bits.push(`set ${clock((new Date(s.end) - new Date(s.start)) / 1000)}`);
+      if (s.rest != null) bits.push(`rest ${clock(s.rest)}`);
+      if (bits.length) inner += `<span class="muted">${bits.join(' · ')}</span>`;
+    }
+    const isLast = i === it.sets.length - 1;
+    if (canDrop(k) && (s.start || s.end || isLast || s.drops.length)) {
+      inner += `<button class="link drop-add" data-action="drop-add" data-k="${k}" data-i="${i}">+ drop</button>`;
+    }
+    return inner ? `<div class="markers${label ? ' indent' : ''}">${inner}</div>` : '';
   }
 
   function finishModal() {
@@ -1284,7 +1394,11 @@
     h += `<select class="big-select" data-page="name" aria-label="Exercise">
       ${recent.length ? `<optgroup label="Recently trained">${recent.slice(0, 12).map(opt).join('')}</optgroup>` : ''}
       <optgroup label="All exercises">${all.filter((n) => !recent.slice(0, 12).includes(n)).map(opt).join('')}</optgroup></select>`;
-    h += `<section class="panel"><h2>Notes</h2>${noteHtml(P.name)}</section>`;
+    h += `<section class="panel"><h2>Notes</h2>${noteHtml(P.name)}${
+      def.bodyweight
+        ? ''
+        : `<label class="check"><input type="checkbox" data-exflag="dropLast" data-name="${esc(P.name)}" ${def.dropLast ? 'checked' : ''}> Drop set on the last set every time</label>`
+    }</section>`;
     const vs = [...new Set((def.variations || []).map((v) => v.name).concat(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation))).filter(Boolean))];
     if (!def.bodyweight && vs.length > 1) {
       if (!vs.includes(P.variation)) P.variation = '';
@@ -1365,6 +1479,7 @@
         <label class="field">Name<input id="new-name" placeholder="Cable Fly" autocomplete="off"></label>
         <label class="check"><input type="checkbox" id="new-onearm"> One arm (log left and right reps)</label>
         <label class="check"><input type="checkbox" id="new-bw"> Bodyweight (BW, +kg or band)</label>
+        <label class="check"><input type="checkbox" id="new-drop"> Drop set on the last set every time</label>
         <label class="field">Types or attachments (optional, separated by commas)<input id="new-var" placeholder="Rope, Straight bar" autocomplete="off"></label>
         <label class="field">Add to day<select id="new-day"><option value="">No day</option>${DAYS.map((d) => `<option>${d}</option>`).join('')}</select></label>
         <p id="new-err" class="err-text" role="alert"></p>
@@ -1469,7 +1584,15 @@
       const c = S.current;
       const target = Math.max(...b.keys.map((k) => c.items[k].sets.length)) + 1;
       b.keys.forEach((k) => {
-        while (c.items[k].sets.length < target) c.items[k].sets.push(newSet(k, c.items[k].sets.length));
+        const sets = c.items[k].sets;
+        const before = sets.length;
+        while (sets.length < target) sets.push(newSet(k, sets.length));
+        // The drop set belongs on the last set: move empty drop rows down to the new one.
+        const prev = sets[before - 1];
+        if (exDef(c.items[k].name).dropLast && prev && prev.drops.length && dropUntouched(prev)) {
+          sets[sets.length - 1].drops = prev.drops;
+          prev.drops = [];
+        }
       });
       requeueNames(b.keys.map((k) => c.items[k].name));
       persist();
@@ -1486,6 +1609,7 @@
         if (sets.length === max) {
           const s = sets.pop();
           if (s.end) unqueueRows(rowIds(k, s));
+          if (sets.length && dropUntouched(sets[sets.length - 1])) addDefaultDrops(k);
         }
       });
       requeueNames(b.keys.map((k) => c.items[k].name));
@@ -1508,6 +1632,27 @@
       if (c.open === b.id) c.open = null;
       requeueNames(names);
       queueSession();
+      persist();
+      render();
+      scheduleSync();
+    },
+    'drop-add'(el) {
+      const k = el.dataset.k;
+      const i = +el.dataset.i;
+      const s = S.current.items[k].sets[i];
+      s.drops.push(newDrop());
+      persist();
+      render();
+      const inp = document.querySelector(`.drop-row [data-k="${k}"][data-i="${i}"][data-d="${s.drops.length - 1}"][data-f="kg"]`);
+      if (inp) inp.focus();
+    },
+    'drop-remove'(el) {
+      const k = el.dataset.k;
+      const i = +el.dataset.i;
+      const s = S.current.items[k].sets[i];
+      const [d] = s.drops.splice(+el.dataset.d, 1);
+      if (d) unqueueRows(sideIds(k, dropBase(s, d)));
+      if (s.end) syncSetRows(k, i);
       persist();
       render();
       scheduleSync();
@@ -1624,6 +1769,7 @@
       const ex = { name };
       if ($('#new-onearm').checked) ex.oneArm = true;
       if ($('#new-bw').checked) ex.bodyweight = true;
+      if ($('#new-drop').checked && !ex.bodyweight) ex.dropLast = true;
       const vars = $('#new-var')
         .value.split(',')
         .map((x) => x.trim())
@@ -1665,7 +1811,23 @@
     const it = S.current.items[k];
     const s = it && it.sets[i];
     if (!s) return;
-    s[f] = el.value;
+    if (el.dataset.d != null) {
+      const j = +el.dataset.d;
+      const d = s.drops[j];
+      if (!d) return;
+      d[f] = el.value;
+      // Typing a drop's reps with no weight entered takes the weight hint.
+      if (f !== 'kg' && el.value && d.kg === '') {
+        const ph = dropPlaceholder(k, i, j);
+        if (ph.kg != null) {
+          d.kg = fmt(ph.kg);
+          const kgEl = el.parentElement.querySelector('[data-f="kg"]');
+          if (kgEl) kgEl.value = d.kg;
+        }
+      }
+    } else {
+      s[f] = el.value;
+    }
     if (el.value) el.classList.remove('need');
     persist();
     if (s.end) requeueSoon(k, i);
@@ -1681,7 +1843,7 @@
       if (s.mode === 'Band' && !s.band) s.band = 'Purple';
       persist();
       if (s.end) {
-        queueRows(rowsFor(k, i));
+        syncSetRows(k, i);
         scheduleSync();
       }
       render();
@@ -1704,7 +1866,7 @@
       const doneIdx = it.sets.map((s, i) => (s.end ? i : -1)).filter((i) => i >= 0);
       unqueueRows(doneIdx.reduce((a, i) => a.concat(rowIds(k, it.sets[i])), []));
       it.variation = v;
-      doneIdx.forEach((i) => queueRows(rowsFor(k, i)));
+      doneIdx.forEach((i) => syncSetRows(k, i));
       persist();
       invalidate();
       render();
@@ -1719,6 +1881,13 @@
       S.library.days[el.dataset.addday].push({ names: [el.value], sets: 3 });
       saveLibrary();
       render();
+    } else if (el.dataset.exflag) {
+      const name = el.dataset.name;
+      let def = S.library.exercises.find((x) => x.name === name);
+      if (!def) S.library.exercises.push((def = { name }));
+      def[el.dataset.exflag] = el.checked;
+      saveLibrary();
+      toast(el.checked ? `${name} will start with a drop set on its last set` : `${name} won't add a drop set by default`);
     } else if (el.dataset.page) {
       S.page = { name: el.value, variation: '' };
       S.editingNote = null;
