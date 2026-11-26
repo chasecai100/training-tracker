@@ -4,16 +4,30 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '2.3.0';
+  const VERSION = '3.0.0';
+  const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
-  // Exercise names from the first version's list, used once to tell them apart from ones you added.
-  const V1_NAMES = [
+
+  // Exercise names from earlier versions, so exercises you created yourself can be told apart.
+  const OLD_NAMES = [
     'Machine Press (Weight stack)', 'Machine Press (Plate)', 'Incline Smith Bench', 'Landmine Press', 'Pec Deck',
     'Smith Shoulder Press', 'Dumbbell Shoulder Press', 'Dumbbell Pullover', 'Tricep Overhead Extension', 'Ab Raise',
     'Pull-up', 'Chin-up', 'Seated Row', 'Supported Row', 'Lat Pulldown (Single)', 'Lat Pulldown (Double)',
     'Reverse Fly (Double)', 'Reverse Fly (Single)', 'Cable Biceps', 'Supported Biceps (Single)', 'Face Pull', 'Ab Crunch',
-    'Leg Press', 'Machine Calf Raise', 'Hamstring Curl', 'Leg Extension', 'Adductor', 'Lateral Raise',
+    'Leg Press', 'Machine Calf Raise', 'Hamstring Curl', 'Leg Extension', 'Adductor', 'Lateral Raise', 'Machine Press',
+    'Incline Bench', 'Shoulder Press', 'Triceps', 'Lat Pulldown', 'Reverse Fly', 'Biceps', 'Calves',
   ];
+  // Old names in your history are read as the new ones, so "last time" and PRs carry over.
+  const NAME_ALIAS = { 'Pull-up': 'Pull-Up', 'Chin-up': 'Chin-Up', Triceps: 'Tricep Overhead Extension', 'Incline Bench': 'Incline Smith Bench', 'Pec Deck': 'Pec Deck Fly' };
+  const CORE_ALIAS = { 'Ab Raise': 'Ab Raise', 'Ab Crunch': 'Ab Crunch' };
+  const VAR_ALIAS = {
+    'Seated Row': { 'Close MAG grip': 'Close MAG Grip', 'Medium MAG grip': 'Medium MAG Grip' },
+    'Lat Pulldown': { 'Close MAG grip': 'Close MAG Grip', 'Medium MAG grip': 'Medium MAG Grip', 'Single arm': 'Single Hand' },
+    'Machine Press': { 'Weight stack': 'Weight Stack', 'Plate-loaded': 'Plate Loaded' },
+    'Reverse Fly': { Double: 'Machine · Double', 'Single arm': 'Machine · Single' },
+    Biceps: { Cable: 'Cable · Double', 'Supported single arm': 'Bench Supported · Single' },
+    'Tricep Overhead Extension': { 'Overhead extension': 'Single Rope · Rope' },
+  };
 
   const ICON = {
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -24,6 +38,21 @@
     trophy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v5a4 4 0 0 1-8 0V4zM8 6H5a3 3 0 0 0 3 3M16 6h3a3 3 0 0 1-3 3M12 13v4M8.5 20h7M10 17h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   };
+
+  const SOUNDS = [
+    ['bleep', 'Bleep Test'],
+    ['bell', 'Boxing Bell'],
+    ['chirp', 'Double Chirp'],
+    ['pips', 'Race Pips'],
+    ['beep', 'Classic Beep'],
+    ['off', 'Off'],
+  ];
+  const STYLES = [
+    ['normal', 'Normal'],
+    ['dropLast', 'Drop Set On Last Set'],
+    ['double', 'Two-Weight Drop Every Set'],
+    ['ultimate', 'Ultimate Drop Set'],
+  ];
 
   // ---------- Small helpers ----------
   const $ = (sel) => document.querySelector(sel);
@@ -42,6 +71,8 @@
   };
   const fmt = (n) => (n == null ? '' : String(Math.round(n * 100) / 100));
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
+  /** Capitalises every word, including after hyphens: "warm-up set" -> "Warm-Up Set". */
+  const tc = (s) => String(s || '').replace(/(^|[\s\-/(])([a-z])/g, (m, a, b) => a + b.toUpperCase());
   const clock = (sec) => {
     sec = Math.max(0, Math.floor(sec));
     const h = Math.floor(sec / 3600);
@@ -94,10 +125,28 @@
     return { get: (k) => run('readonly', (s) => s.get(k)), set: (k, v) => run('readwrite', (s) => s.put(v, k)) };
   })();
 
+  // ---------- Exercise definitions ----------
+  /** Choices can be written as plain names or { name, oneArm }. */
+  function normalizeEx(e) {
+    const x = clone(e);
+    if (Array.isArray(x.attachments)) x.variations = x.attachments;
+    if (Array.isArray(x.variations)) {
+      x.options = [{ label: x.label || 'Type', choices: x.variations }];
+      delete x.variations;
+      delete x.attachments;
+      delete x.label;
+    }
+    (x.options || []).forEach((g) => (g.choices = g.choices.map((c) => (typeof c === 'string' ? { name: c } : c))));
+    return x;
+  }
+
   // ---------- State ----------
   let notice = '';
   const S = {
-    settings: Object.assign({ pass: '', restSec: 120, warmRest: 60, sound: true, keepAwake: true }, load(KEYS.settings, {})),
+    settings: Object.assign(
+      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false },
+      load(KEYS.settings, {})
+    ),
     library: loadLibrary(),
     current: loadCurrent(),
     pending: Object.assign({ sets: {}, deleteSets: [], sessions: {}, deleteSessions: [], notes: {} }, load(KEYS.pending, {})),
@@ -109,37 +158,22 @@
     editingNote: null,
     reorder: false,
     pairing: null,
+    setupOpen: null,
   };
-
-  function normalizeEx(e) {
-    const x = clone(e);
-    if (Array.isArray(x.attachments)) {
-      x.variations = x.attachments.map((n) => ({ name: n }));
-      x.label = 'Attachment';
-      delete x.attachments;
-    }
-    return x;
-  }
+  if (typeof S.settings.sound !== 'string') S.settings.sound = S.settings.sound ? 'bleep' : 'off';
 
   function loadLibrary() {
     let lib = load(KEYS.library, null);
-    if (lib && lib.version === 2) {
-      // Version 3 added drop sets: keep your split, switch them on for triceps and biceps.
-      ['Triceps', 'Biceps'].forEach((n) => {
-        const e = lib.exercises.find((x) => x.name === n);
-        if (e) e.dropLast = true;
-      });
-      lib.version = 3;
-    }
     if (!lib || lib.version !== DEF.version) {
-      const custom =
-        lib && Array.isArray(lib.exercises)
-          ? lib.exercises.filter((e) => !V1_NAMES.includes(e.name) && !DEF.exercises.some((d) => d.name === e.name)).map(normalizeEx)
-          : [];
-      lib = { version: DEF.version, exercises: clone(DEF.exercises).concat(custom), days: clone(DEF.days) };
+      // A new split came with this version: start from it, keeping exercises you created yourself.
+      const known = new Set(OLD_NAMES.concat(DEF.exercises.map((e) => e.name)));
+      const custom = lib && Array.isArray(lib.exercises) ? lib.exercises.filter((e) => !known.has(e.name)) : [];
+      lib = { version: DEF.version, exercises: DEF.exercises.concat(custom).map(normalizeEx), days: clone(DEF.days) };
+      if (load(KEYS.library, null)) notice = 'Your new split and Workout Setup are loaded. Fine-tune them in Settings.';
     } else {
+      lib.exercises = lib.exercises.map(normalizeEx);
       const have = new Set(lib.exercises.map((e) => e.name));
-      DEF.exercises.forEach((e) => !have.has(e.name) && lib.exercises.push(clone(e)));
+      DEF.exercises.forEach((e) => !have.has(e.name) && lib.exercises.push(normalizeEx(e)));
       DAYS.forEach((d) => {
         if (!Array.isArray(lib.days[d])) lib.days[d] = clone(DEF.days[d] || []);
       });
@@ -150,12 +184,11 @@
 
   function loadCurrent() {
     const c = load(KEYS.current, null);
-    if (c && c.v !== 2) {
+    if (c && c.v !== WORKOUT_V) {
       store(KEYS.current, null);
-      notice = 'The app was updated, so your open workout was closed. Sets you had ticked off are saved.';
+      notice = 'The app was updated, so your open workout was closed. Sets you had finished are saved.';
       return null;
     }
-    if (c) Object.values(c.items).forEach((it) => it.sets.forEach((s) => Array.isArray(s.drops) || (s.drops = [])));
     return c;
   }
 
@@ -164,8 +197,15 @@
   const saveSettings = () => store(KEYS.settings, S.settings);
   const saveLibrary = () => store(KEYS.library, S.library);
   const exDef = (name) => S.library.exercises.find((e) => e.name === name) || { name };
-  const varDef = (def, v) => (def.variations || []).find((x) => x.name === v) || null;
-  const hasVariations = (def) => Array.isArray(def.variations) && def.variations.length > 0;
+  const groupsOf = (def) => def.options || [];
+  const hasOptions = (def) => groupsOf(def).length > 0;
+  const choiceOf = (def, label, name) => {
+    const g = groupsOf(def).find((x) => x.label === label);
+    return g ? g.choices.find((c) => c.name === name) : null;
+  };
+  const variationFrom = (def, choices) => groupsOf(def).map((g) => (choices && choices[g.label]) || g.choices[0].name).join(' · ');
+  const oneArmFor = (def, choices) =>
+    !!def.oneArm || groupsOf(def).some((g) => (choiceOf(def, g.label, (choices && choices[g.label]) || g.choices[0].name) || {}).oneArm);
   const hasPending = () =>
     Object.keys(S.pending.sets).length +
     S.pending.deleteSets.length +
@@ -183,15 +223,30 @@
     memoHist.clear();
   }
 
+  /** Reads an old row under today's names, so history from earlier versions still lines up. */
+  function normalizeRow(r) {
+    let ex = NAME_ALIAS[r.Exercise] || r.Exercise;
+    let v = r.Variation || '';
+    if (CORE_ALIAS[ex]) {
+      v = CORE_ALIAS[ex];
+      ex = 'Core Exercise';
+    }
+    if (VAR_ALIAS[ex] && VAR_ALIAS[ex][v]) v = VAR_ALIAS[ex][v];
+    const def = exDef(ex);
+    if (!v && hasOptions(def)) v = variationFrom(def, {});
+    if (ex === r.Exercise && v === (r.Variation || '')) return r;
+    return Object.assign({}, r, { Exercise: ex, Variation: v });
+  }
+
   /** Every set we know about: the sheet's copy plus changes not uploaded yet. */
   function allSets() {
     if (memoSets) return memoSets;
     const del = new Set(S.pending.deleteSets);
     const map = new Map();
     S.history.sets.forEach((r) => {
-      if (r.ID && !del.has(r.ID)) map.set(r.ID, r);
+      if (r.ID && !del.has(r.ID)) map.set(r.ID, normalizeRow(r));
     });
-    Object.values(S.pending.sets).forEach((r) => map.set(r.ID, r));
+    Object.values(S.pending.sets).forEach((r) => map.set(r.ID, normalizeRow(r)));
     return (memoSets = [...map.values()]);
   }
 
@@ -204,7 +259,7 @@
   }
   const noteOf = (name) => notesMap()[name] || '';
 
-  /** Earlier sessions of one exercise, newest first, each with its sets grouped. */
+  /** Earlier sessions of one exercise, newest first; working sets and warm-ups grouped separately. */
   function historyFor(name, variation) {
     const cur = S.current ? S.current.session : '';
     const key = `${name}|${variation || ''}|${cur}`;
@@ -221,7 +276,6 @@
       }
       s.rows.push(r);
     });
-    // Working sets and warm-ups are grouped separately: warm-ups never count toward progress.
     const out = [...by.values()]
       .map((s) =>
         Object.assign(s, {
@@ -243,20 +297,24 @@
       .sort((a, b) => num(a.Set) - num(b.Set) || (num(a.Drop) || 0) - (num(b.Drop) || 0))
       .forEach((r) => {
         const k = num(r.Set);
-        const e = by.get(k) || { set: k, kg: null, variation: '', reps: null, repsR: null, rest: null, drops: [] };
+        const e = by.get(k) || { set: k, kg: null, kgR: null, variation: '', reps: null, repsR: null, partials: null, rest: null, drops: [] };
         by.set(k, e);
         const dn = num(r.Drop) || 0;
+        const right = r.Side === 'R';
         if (dn > 0) {
           const d = e.drops[dn - 1] || (e.drops[dn - 1] = { kg: null, reps: null, repsR: null });
-          if (r.Side === 'R') d.repsR = num(r.Reps);
+          if (right) d.repsR = num(r.Reps);
           else d.reps = num(r.Reps);
           if (d.kg == null) d.kg = num(r.kg);
           return;
         }
         if (!e.variation) e.variation = r.Variation || '';
-        if (r.Side === 'R') e.repsR = num(r.Reps);
-        else {
+        if (right) {
+          e.repsR = num(r.Reps);
+          e.kgR = num(r.kg);
+        } else {
           e.reps = num(r.Reps);
+          e.partials = num(r.Partials);
           e.rest = num(r['Rest (s)']);
         }
         if (e.kg == null) e.kg = num(r.kg);
@@ -271,11 +329,12 @@
       if (v.indexOf('Band') === 0) return `${v.replace(/^Band:?\s*/, '') || 'Band'} band`;
       return 'BW';
     }
-    return e.kg != null ? `${fmt(e.kg)} kg` : '';
+    return e.kg != null ? `${def.kgLabel ? '+' : ''}${fmt(e.kg)} kg` : '';
   }
   function repsLabel(e) {
     const r = (x) => (x == null ? '–' : x);
-    return e.repsR != null ? `L${r(e.reps)}/R${r(e.repsR)}` : `${r(e.reps)}`;
+    const p = e.partials ? `+${e.partials}p` : '';
+    return e.repsR != null ? `L${r(e.reps)}/R${r(e.repsR)}` : `${r(e.reps)}${p}`;
   }
   const dropsLabel = (e) =>
     e.drops && e.drops.length ? ' ↓ ' + e.drops.map((d) => `${d.kg != null ? fmt(d.kg) + '×' : ''}${repsLabel(d)}`).join(' ↓ ') : '';
@@ -289,7 +348,6 @@
     const r = entries.map((e) => e.rest).filter((x) => x != null && x > 0);
     return r.length ? r.reduce((a, b) => a + b, 0) / r.length : null;
   }
-
   function cmp(kg, reps, pkg, preps) {
     if (reps == null || preps == null) return null;
     const a = kg || 0;
@@ -303,54 +361,67 @@
   }
 
   // ---------- Workout model ----------
-  // A workout has blocks (cards). Each block holds one exercise, or two for a superset.
-  // Each exercise in a block is an "item" with its own sets; the same exercise can
-  // appear twice in a day (Calves), and its set numbers then carry on across both.
+  // A workout has blocks (cards). A block holds one exercise, or two for a superset.
+  // Each exercise in a block is an "item" with its settings (cfg), picker choices and set rows.
+  // One-arm exercises have one row per side (L then R), each timed on its own.
+  // Warm-up rows (s.warm) sit at the front and never count toward progress.
   const orderedKeys = () => S.current.blocks.reduce((a, b) => a.concat(b.keys), []);
   const blockOf = (k) => S.current.blocks.find((b) => b.keys.includes(k));
   const itemDef = (k) => exDef(S.current.items[k].name);
-  const oneArm = (k) => {
-    const it = S.current.items[k];
-    const def = exDef(it.name);
-    return !!def.oneArm || !!(varDef(def, it.variation) || {}).oneArm;
-  };
-  const varFilter = (k) => (hasVariations(itemDef(k)) ? S.current.items[k].variation : '');
+  const oneArm = (k) => oneArmFor(itemDef(k), S.current.items[k].choices);
+  const sidesOf = (k) => (oneArm(k) ? ['L', 'R'] : ['']);
+  const varFilter = (k) => (hasOptions(itemDef(k)) ? variationFrom(itemDef(k), S.current.items[k].choices) : '');
   const lastOf = (k) => historyFor(S.current.items[k].name, varFilter(k))[0] || null;
-
-  // Warm-up sets sit at the front of an exercise's sets (s.warm). They're numbered W1, W2…
-  // and working sets keep their own numbers 1, 2… so comparisons with last time line up.
-  const workCount = (it) => it.sets.filter((s) => !s.warm).length;
-  const warmCount = (it) => it.sets.filter((s) => s.warm).length;
+  const workRows = (it) => it.sets.filter((s) => !s.warm).length;
+  const warmRows = (it) => it.sets.filter((s) => s.warm).length;
+  const unitsOf = (k) => Math.ceil(workRows(S.current.items[k]) / sidesOf(k).length);
   function countBefore(k, i, warm) {
     const sets = S.current.items[k].sets;
     let n = 0;
     for (let j = 0; j < i; j++) if (!!sets[j].warm === warm) n++;
     return n;
   }
-  /** Index in it.sets of the r-th working set (0-based). */
-  function workAt(k, r) {
-    const sets = S.current.items[k].sets;
-    let n = -1;
-    for (let j = 0; j < sets.length; j++) if (!sets[j].warm && ++n === r) return j;
-    return -1;
+  /** Which set (0-based) a row belongs to among its kind (warm-up or working). */
+  const unitIndex = (k, i) => Math.floor(countBefore(k, i, !!S.current.items[k].sets[i].warm) / sidesOf(k).length);
+  /** Row indexes of working set u. */
+  function unitRows(k, u) {
+    const out = [];
+    const size = sidesOf(k).length;
+    S.current.items[k].sets.forEach((s, i) => {
+      if (!s.warm && Math.floor(countBefore(k, i, false) / size) === u) out.push(i);
+    });
+    return out;
   }
   function setNo(k, i) {
     const it = S.current.items[k];
-    if (it.sets[i] && it.sets[i].warm) return countBefore(k, i, true) + 1;
+    const u = unitIndex(k, i) + 1;
+    if (it.sets[i].warm) return u;
+    // Set numbers carry on across a repeat of the same exercise and type (e.g. Calves twice on Legs).
     let off = 0;
     for (const key of orderedKeys()) {
       if (key === k) break;
-      if (S.current.items[key].name === it.name) off += workCount(S.current.items[key]);
+      if (S.current.items[key].name === it.name && varFilter(key) === varFilter(k)) off += unitsOf(key);
     }
-    return off + countBefore(k, i, false) + 1;
+    return off + u;
   }
-  const setLabel = (k, i) => (S.current.items[k].sets[i].warm ? 'W' : '') + setNo(k, i);
+  const setLabel = (k, i) => {
+    const s = S.current.items[k].sets[i];
+    return (s.warm ? 'W' : '') + setNo(k, i) + (s.side || '');
+  };
   function entryFor(k, i) {
     const last = lastOf(k);
     if (!last) return null;
     const no = setNo(k, i);
     const list = S.current.items[k].sets[i].warm ? last.warmups : last.entries;
     return list.find((e) => e.set === no) || null;
+  }
+  /** Last time's numbers for this row's side. */
+  function sideEntry(k, i) {
+    const p = entryFor(k, i);
+    if (!p) return null;
+    const s = S.current.items[k].sets[i];
+    if (s.side !== 'R') return p;
+    return Object.assign({}, p, { kg: p.kgR != null ? p.kgR : p.kg, reps: p.repsR, drops: p.drops.map((d) => Object.assign({}, d, { reps: d.repsR })) });
   }
   function forEachSet(fn) {
     if (!S.current) return;
@@ -367,96 +438,76 @@
   function variationOf(k, s) {
     const it = S.current.items[k];
     const def = exDef(it.name);
-    if (!def.bodyweight) return it.variation || '';
+    if (!def.bodyweight) return hasOptions(def) ? variationFrom(def, it.choices) : '';
     if (s.mode === 'Weighted') return 'Weighted';
     if (s.mode === 'Band') return 'Band: ' + (cap((s.band || '').trim()) || 'Purple');
     return 'Bodyweight';
   }
 
-  function defaultVariation(name) {
-    const def = exDef(name);
-    if (!hasVariations(def)) return '';
-    const recent = historyFor(name, '')[0];
-    const used = recent && recent.entries.length ? recent.entries[0].variation : '';
-    return varDef(def, used) ? used : def.variations[0].name;
-  }
-
-  function newSet(k, i) {
+  function newSet(k, opts) {
     const it = S.current.items[k];
     const def = exDef(it.name);
-    const s = { id: uid(), kg: '', reps: '', repsR: '', mode: 'Bodyweight', band: 'Purple', start: null, end: null, rest: null, drops: [] };
-    if (def.bodyweight) {
-      const last = historyFor(it.name, '')[0];
-      const no = setNo(k, i);
-      const p = last && (last.entries.find((e) => e.set === no) || last.entries[last.entries.length - 1]);
-      if (p) {
-        const v = p.variation || 'Bodyweight';
-        s.mode = v === 'Weighted' ? 'Weighted' : v.indexOf('Band') === 0 ? 'Band' : 'Bodyweight';
-        if (s.mode === 'Band') s.band = v.replace(/^Band:?\s*/, '') || 'Purple';
+    const s = Object.assign(
+      { id: uid(), warm: false, side: '', kg: '', reps: '', partials: '', mode: 'Bodyweight', band: it.cfg.band || 'Purple', start: null, end: null, rest: null, drops: [] },
+      opts || {}
+    );
+    if (def.bodyweight && !s.warm) {
+      const u = opts && opts.unit != null ? opts.unit : 0;
+      const modes = it.cfg.modes || [];
+      if (modes[u]) s.mode = modes[Math.min(u, modes.length - 1)];
+      else {
+        const last = historyFor(it.name, '')[0];
+        const p = last && (last.entries[u] || last.entries[last.entries.length - 1]);
+        if (p) {
+          const v = p.variation || 'Bodyweight';
+          s.mode = v === 'Weighted' ? 'Weighted' : v.indexOf('Band') === 0 ? 'Band' : 'Bodyweight';
+          if (s.mode === 'Band') s.band = v.replace(/^Band:?\s*/, '') || s.band;
+        }
       }
     }
+    delete s.unit;
     return s;
   }
 
-  function addBlock(names, sets, open = true) {
+  /** Builds an item's rows: warm-ups first, then working sets; one row per side for one-arm exercises. */
+  function buildSets(k, units, warmUnits) {
+    const it = S.current.items[k];
+    it.sets = [];
+    const sides = sidesOf(k);
+    for (let w = 0; w < warmUnits; w++) sides.forEach((side) => it.sets.push(newSet(k, { warm: true, side })));
+    for (let u = 0; u < units; u++) sides.forEach((side) => it.sets.push(newSet(k, { side, unit: u })));
+    applyStyle(k);
+  }
+
+  function defaultCfg(name) {
+    const last = historyFor(name, '')[0];
+    return { sets: Math.max(1, Math.min(last ? last.entries.length : 3, 8)), warmups: 0, style: 'normal' };
+  }
+
+  function addBlock(names, cfg, open = true) {
     const c = S.current;
     const b = { id: uid(), keys: [] };
     c.blocks.push(b);
     names.forEach((n) => {
       const k = uid();
-      c.items[k] = { name: n, variation: defaultVariation(n), sets: [] };
+      const def = exDef(n);
+      const choices = {};
+      groupsOf(def).forEach((g) => {
+        const want = cfg.choices && cfg.choices[n] && cfg.choices[n][g.label];
+        choices[g.label] = choiceOf(def, g.label, want) ? want : g.choices[0].name;
+      });
+      c.items[k] = { name: n, choices, cfg: clone(cfg), sets: [] };
       b.keys.push(k);
     });
-    b.keys.forEach((k) => {
-      let count = sets;
-      if (!count) {
-        const last = lastOf(k);
-        count = Math.max(1, Math.min(last ? last.entries.length : 3, 8));
-      }
-      for (let i = 0; i < count; i++) c.items[k].sets.push(newSet(k, i));
-      addDefaultDrops(k);
-    });
+    b.keys.forEach((k) => buildSets(k, cfg.sets || 3, cfg.warmups || 0));
     if (open) c.open = b.id;
     return b;
-  }
-
-  // ---------- Drop sets ----------
-  const newDrop = () => ({ id: uid(), kg: '', reps: '', repsR: '' });
-  const canDrop = (k) => !itemDef(k).bodyweight;
-  const dropUntouched = (s) => !s.start && !s.end && (s.drops || []).every((d) => !d.kg && !d.reps && !d.repsR);
-
-  /** For exercises marked dropLast, give the last set as many drop rows as last time (3 the first time). */
-  function addDefaultDrops(k) {
-    const it = S.current.items[k];
-    if (!exDef(it.name).dropLast || !canDrop(k) || !workCount(it)) return;
-    const li = workAt(k, workCount(it) - 1);
-    const lastSet = it.sets[li];
-    if (lastSet.drops.length) return;
-    const p = entryFor(k, li);
-    const prevLast = lastOf(k) && lastOf(k).entries.filter((e) => e.drops.length).slice(-1)[0];
-    const n = (p && p.drops.length) || (prevLast && prevLast.drops.length) || 3;
-    for (let j = 0; j < n; j++) lastSet.drops.push(newDrop());
-  }
-
-  /** Weight and reps hints for a drop: last time's same drop, else carry on the step down. */
-  function dropPlaceholder(k, i, j) {
-    const s = S.current.items[k].sets[i];
-    const p = entryFor(k, i);
-    const pd = p && p.drops[j];
-    let kg = pd ? pd.kg : null;
-    if (kg == null && j > 0) {
-      const at = (jj) => (jj < 0 ? num(s.kg) ?? placeholder(k, i).kg : num(s.drops[jj].kg) ?? dropPlaceholder(k, i, jj).kg);
-      const a = at(j - 1);
-      const b = at(j - 2);
-      if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
-    }
-    return { kg, reps: pd ? pd.reps : null, repsR: pd ? pd.repsR : null };
   }
 
   function startWorkout(day) {
     const now = new Date();
     S.current = {
-      v: 2,
+      v: WORKOUT_V,
       session: `${ymd(now)}-${pad(now.getHours())}${pad(now.getMinutes())}`,
       day: day === 'Other' ? 'Workout' : day,
       created: now.toISOString(),
@@ -466,11 +517,12 @@
       firstStart: null,
       lastEnd: null,
       restCountdown: false,
+      restBase: 0,
       restExtra: 0,
       beepedAt: null,
     };
     invalidate();
-    (S.library.days[day] || []).forEach((it) => addBlock(it.names, it.sets, false));
+    (S.library.days[day] || []).forEach((it) => addBlock(it.names, it, false));
     S.current.open = S.current.blocks.length ? S.current.blocks[0].id : null;
     S.tab = 'workout';
     persist();
@@ -480,36 +532,99 @@
     window.scrollTo(0, 0);
   }
 
+  // ---------- Set styles and drops ----------
+  const newDrop = (kg) => ({ id: uid(), kg: kg == null ? '' : fmt(kg), reps: '' });
+  const canDrop = (k) => !itemDef(k).bodyweight;
+  const dropUntouched = (s) => !s.start && !s.end && (s.drops || []).every((d) => !d.reps);
+
+  /** Adds the drop rows the exercise's set style asks for, without touching rows already in use. */
+  function applyStyle(k) {
+    const it = S.current.items[k];
+    if (!canDrop(k)) return;
+    const style = it.cfg.style || 'normal';
+    const units = unitsOf(k);
+    for (let u = 0; u < units; u++) {
+      unitRows(k, u).forEach((i) => {
+        const s = it.sets[i];
+        if (!dropUntouched(s)) return;
+        if (style === 'double') {
+          if (!s.drops.length) s.drops = [newDrop()];
+        } else if (style === 'ultimate') {
+          regenUltimate(k, i);
+        } else if (style === 'dropLast') {
+          if (u === units - 1 && !s.drops.length) {
+            const p = sideEntry(k, i);
+            const n = (p && p.drops.length) || 3;
+            for (let j = 0; j < n; j++) s.drops.push(newDrop());
+          } else if (u !== units - 1 && s.drops.length && s.drops.every((d) => !d.kg)) {
+            s.drops = [];
+          }
+        }
+      });
+    }
+  }
+
+  /** Ultimate drop set: from the set's weight, step down by `step` kg to the floor for this set. */
+  function regenUltimate(k, i) {
+    const it = S.current.items[k];
+    const s = it.sets[i];
+    if (s.warm || it.cfg.style !== 'ultimate' || s.drops.some((d) => d.reps)) return;
+    const start = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
+    const step = num(it.cfg.step) || 2.5;
+    const floors = (it.cfg.floors && it.cfg.floors.length ? it.cfg.floors : [step]).map(Number);
+    const floor = floors[Math.min(unitIndex(k, i), floors.length - 1)];
+    const ws = [];
+    if (start) for (let w = Math.round((start - step) * 100) / 100; w >= floor - 1e-9 && ws.length < 30; w = Math.round((w - step) * 100) / 100) ws.push(w);
+    s.drops = ws.map((w, j) => Object.assign(s.drops[j] || newDrop(), { kg: fmt(w) }));
+  }
+
+  /** Hints for a drop: last time's same drop, else carry on the step down. */
+  function dropPlaceholder(k, i, j) {
+    const s = S.current.items[k].sets[i];
+    const p = sideEntry(k, i);
+    const pd = p && p.drops[j];
+    let kg = pd ? pd.kg : null;
+    if (kg == null && j > 0) {
+      const at = (jj) => (jj < 0 ? (num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg) : num(s.drops[jj].kg) != null ? num(s.drops[jj].kg) : dropPlaceholder(k, i, jj).kg);
+      const a = at(j - 1);
+      const b = at(j - 2);
+      if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
+    }
+    return { kg, reps: pd ? pd.reps : null };
+  }
+
   function placeholder(k, i) {
     const it = S.current.items[k];
     const def = exDef(it.name);
-    const last = lastOf(k);
-    const p = entryFor(k, i);
-    const wantsKg = (set) => !def.bodyweight || set.mode === 'Weighted';
-    if (it.sets[i].warm) {
+    const s = it.sets[i];
+    const p = sideEntry(k, i);
+    const wantsKg = (x) => !def.bodyweight || x.mode === 'Weighted';
+    if (s.warm) {
       // Warm-up hint: last time's same warm-up, else a lighter share of the working weight.
-      let kg = p && wantsKg(it.sets[i]) ? p.kg : null;
-      const first = workAt(k, 0);
+      let kg = p && wantsKg(s) ? p.kg : null;
+      const first = it.sets.findIndex((x) => !x.warm && (x.side || '') === (s.side || ''));
       if (kg == null && first >= 0 && !def.bodyweight) {
-        const base = num(it.sets[first].kg) ?? placeholder(k, first).kg;
-        const share = [0.5, 0.7, 0.85][Math.min(countBefore(k, i, true), 2)];
+        const base = num(it.sets[first].kg) != null ? num(it.sets[first].kg) : placeholder(k, first).kg;
+        const share = [0.5, 0.7, 0.85][Math.min(unitIndex(k, i), 2)];
         if (base) kg = Math.max(2.5, Math.round((base * share) / 2.5) * 2.5);
       }
-      return { kg, reps: p ? p.reps : null, repsR: p ? p.repsR : null };
+      return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
     }
-    let prevI = i - 1;
-    while (prevI >= 0 && it.sets[prevI].warm) prevI--;
-    const prev = prevI >= 0 && wantsKg(it.sets[prevI]) ? it.sets[prevI] : null;
-    // Weight hint: what you typed for the set before, else last time's same set,
-    // else the hint the set before got, else last time's final set.
-    let kg = prev ? num(prev.kg) : null;
-    if (kg == null && p && (!def.bodyweight || p.variation === 'Weighted')) kg = p.kg;
-    if (kg == null && prev) kg = placeholder(k, prevI).kg;
-    if (kg == null && last) {
+    // Weight hint: last time's same set, else the set before (same side), else last time's final set.
+    let kg = p && wantsKg(s) && (!def.bodyweight || p.variation === 'Weighted') ? p.kg : null;
+    if (kg == null) {
+      for (let j = i - 1; j >= 0 && kg == null; j--) {
+        const x = it.sets[j];
+        if (x.warm || (x.side || '') !== (s.side || '') || !wantsKg(x)) continue;
+        kg = num(x.kg) != null ? num(x.kg) : placeholder(k, j).kg;
+      }
+    }
+    const last = lastOf(k);
+    if (kg == null && last && wantsKg(s)) {
       const pool = last.entries.filter((e) => e.kg != null && (!def.bodyweight || e.variation === 'Weighted'));
       if (pool.length) kg = pool[pool.length - 1].kg;
     }
-    return { kg, reps: p ? p.reps : null, repsR: p ? p.repsR : null };
+    return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
   }
 
   function compareSet(k, i) {
@@ -517,29 +632,20 @@
     const def = exDef(it.name);
     const s = it.sets[i];
     if (s.warm) return null;
-    const p = entryFor(k, i);
+    const p = sideEntry(k, i);
     if (!p) return null;
     if (def.bodyweight && variationOf(k, s) !== (p.variation || 'Bodyweight')) return null;
     const kg = def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg);
-    if (oneArm(k)) return { L: cmp(kg, num(s.reps), p.kg, p.reps), R: cmp(kg, num(s.repsR), p.kg, p.repsR) };
-    return { one: cmp(kg, num(s.reps), p.kg, p.reps) };
+    return cmp(kg, num(s.reps), p.kg, p.reps);
   }
 
   // ---------- Personal records and targets ----------
   const e1rm = (kg, reps) => (kg && reps ? kg * (1 + reps / 30) : 0);
   const repsOf = (e) => (e.repsR != null ? Math.min(e.reps || 0, e.repsR || 0) : e.reps);
-
-  /** The current set as an entry, in the same shape as history entries. */
   function entryOf(k, i) {
-    const it = S.current.items[k];
-    const s = it.sets[i];
-    const def = exDef(it.name);
-    return {
-      kg: def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg),
-      reps: num(s.reps),
-      repsR: oneArm(k) ? num(s.repsR) : null,
-      variation: variationOf(k, s),
-    };
+    const s = S.current.items[k].sets[i];
+    const def = itemDef(k);
+    return { kg: def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg), reps: num(s.reps), repsR: null, variation: variationOf(k, s) };
   }
   function addToBests(b, e, def) {
     const reps = repsOf(e);
@@ -557,7 +663,6 @@
     if (!def.bodyweight) b.e1rm = Math.max(b.e1rm, e1rm(e.kg, reps));
     b.pairs.push([e.kg, reps]);
   }
-  /** Best marks from earlier sessions (working sets only, drops and warm-ups excluded). */
   function historyBests(name, variation) {
     const key = `best|${name}|${variation || ''}|${S.current ? S.current.session : ''}`;
     if (memoHist.has(key)) return memoHist.get(key);
@@ -599,32 +704,30 @@
     if (atOrAbove.length && reps > Math.max(...atOrAbove.map((p) => p[1]))) out.push(`most reps at ${fmt(e.kg)} kg`);
     return out;
   }
-  /** "To beat" for a working set: last time's same set with one more rep. */
+  /** "To beat": last time's same set (and side) with one more rep. */
   function targetText(k, i, short) {
     const it = S.current.items[k];
     if (it.sets[i].warm) return '';
-    const p = entryFor(k, i);
+    const p = sideEntry(k, i);
     if (!p || p.reps == null) return '';
     const def = exDef(it.name);
-    const up = (x) => (x == null ? '?' : x + 1);
-    const reps = p.repsR != null ? `L${up(p.reps)}/R${up(p.repsR)}` : `${up(p.reps)}`;
-    const w = weightLabel(p, def);
-    const main = `${w ? w + ' × ' : ''}${reps}`;
+    const w = weightLabel(Object.assign({}, p, { repsR: null }), def);
+    const main = `${w ? w + ' × ' : ''}${p.reps + 1}`;
     if (short) return main;
     const heavier = !def.bodyweight || p.variation === 'Weighted';
-    return `To beat: ${main}${heavier ? ', or go heavier' : ''}`;
+    return `To Beat: ${main}${heavier ? ', Or Go Heavier' : ''}`;
   }
   function setVolume(k, s) {
     const def = itemDef(k);
     if (s.warm || def.bodyweight) return 0;
-    const side = (x) => (num(x.kg) || 0) * ((num(x.reps) || 0) + (oneArm(k) ? num(x.repsR) || 0 : 0));
-    return side(s) + (s.drops || []).reduce((a, d) => a + side(d), 0);
+    const v = (x) => (num(x.kg) || 0) * (num(x.reps) || 0);
+    return v(s) + (s.drops || []).reduce((a, d) => a + v(d), 0);
   }
 
-  const sideIds = (k, base) => (oneArm(k) ? [base + '-L', base + '-R'] : [base]);
+  // ---------- Sheet rows ----------
   const dropBase = (s, d) => `${s.id}-${d.id}`;
-  /** Every sheet row id a set can own: its own row(s) plus one per drop. */
-  const rowIds = (k, s) => (s.drops || []).reduce((a, d) => a.concat(sideIds(k, dropBase(s, d))), sideIds(k, s.id));
+  /** Every sheet row id a set can own: its own row plus one per drop. */
+  const rowIds = (k, s) => [s.id].concat((s.drops || []).map((d) => dropBase(s, d)));
 
   function rowsFor(k, i) {
     const c = S.current;
@@ -645,33 +748,26 @@
       Type: s.warm ? 'Warm-up' : '',
       Set: setNo(k, i),
       Drop: '',
+      Side: s.side || '',
       kg: kg == null ? '' : kg,
+      Reps: num(s.reps),
+      Partials: num(s.partials) == null ? '' : num(s.partials),
       Start: hms(st),
       End: hms(en),
+      'Set (s)': dur,
+      'Rest (s)': s.rest == null ? '' : s.rest,
       Session: c.session,
+      ID: s.id,
     };
-    const rest = s.rest == null ? '' : s.rest;
-    const arm = oneArm(k);
-    const rows = arm
-      ? [
-          Object.assign({}, base, { Side: 'L', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id + '-L' }),
-          Object.assign({}, base, { Side: 'R', Reps: num(s.repsR), 'Set (s)': '', 'Rest (s)': '', ID: s.id + '-R' }),
-        ]
-      : [Object.assign({}, base, { Side: '', Reps: num(s.reps), 'Set (s)': dur, 'Rest (s)': rest, ID: s.id })];
-    // Drops share the set's number and times; only drops with something typed are saved.
+    const rows = [base];
+    // Drops share the set's number, side and times; only drops with something typed are saved.
     let n = 0;
     (s.drops || []).forEach((d) => {
       const dkg = num(d.kg);
       const dr = num(d.reps);
-      const drR = num(d.repsR);
-      if (dkg == null && dr == null && drR == null) return;
+      if (dr == null) return;
       n++;
-      const db = Object.assign({}, base, { Drop: n, kg: dkg == null ? '' : dkg, 'Set (s)': '', 'Rest (s)': '' });
-      const id = dropBase(s, d);
-      if (arm) {
-        rows.push(Object.assign({}, db, { Side: 'L', Reps: dr, ID: id + '-L' }));
-        rows.push(Object.assign({}, db, { Side: 'R', Reps: drR, ID: id + '-R' }));
-      } else rows.push(Object.assign({}, db, { Side: '', Reps: dr, ID: id }));
+      rows.push(Object.assign({}, base, { Drop: n, kg: dkg == null ? '' : dkg, Reps: dr, Partials: '', 'Set (s)': '', 'Rest (s)': '', ID: dropBase(s, d) }));
     });
     return rows;
   }
@@ -685,7 +781,6 @@
     if (stale.length) unqueueRows(stale);
     queueRows(rows);
   }
-
   function queueRows(rows) {
     const ids = new Set(rows.map((r) => r.ID));
     rows.forEach((r) => (S.pending.sets[r.ID] = r));
@@ -719,7 +814,7 @@
     forEachSet((k, i, s) => {
       if (!s.end) return;
       any++;
-      if (!s.warm) sets++;
+      if (!s.warm && s.side !== 'R') sets++;
       const en = new Date(s.end);
       const st = s.start ? new Date(s.start) : en;
       if (!first || st < first) first = st;
@@ -760,20 +855,18 @@
   }
 
   const requeueTimers = {};
-  function requeueSoon(k, i) {
-    const key = k + '|' + i;
-    clearTimeout(requeueTimers[key]);
-    requeueTimers[key] = setTimeout(() => {
+  function requeueSoon(k, sid) {
+    clearTimeout(requeueTimers[sid]);
+    requeueTimers[sid] = setTimeout(() => {
       const it = S.current && S.current.items[k];
-      const s = it && it.sets[i];
-      if (s && s.end) {
+      const i = it ? it.sets.findIndex((x) => x.id === sid) : -1;
+      if (i >= 0 && it.sets[i].end) {
         syncSetRows(k, i);
         scheduleSync();
         refreshFooter(k, i);
       }
     }, 800);
   }
-
   /** Redraws just the line under a set (markers, PR, timing) without touching the boxes being typed in. */
   function refreshFooter(k, i) {
     const it = S.current && S.current.items[k];
@@ -792,23 +885,16 @@
     if (prs.length && s.prSig !== sig) {
       s.prSig = sig;
       persist();
-      toast(`New PR on ${it.name}: ${prs.join(', ')}`);
+      toast(`New PR On ${it.name}: ${prs.join(', ')}`);
     }
   }
-  /** Rest target after a set: the longest target among the exercises in its block. */
-  function blockRest(k) {
-    const b = blockOf(k);
-    const names = b ? b.keys.map((kk) => S.current.items[kk].name) : [S.current.items[k].name];
-    return Math.max(...names.map((n) => exDef(n).rest || S.settings.restSec));
-  }
 
-  // Start, end and undo a set
+  // ---------- Start, end and undo a set ----------
   function startSet(k, i) {
     const c = S.current;
     const s = c.items[k].sets[i];
-    const run = runningSet();
-    if (run) {
-      toast('End the set that’s running first');
+    if (runningSet()) {
+      toast('End The Set That’s Running First');
       return;
     }
     const now = new Date();
@@ -821,20 +907,59 @@
     render();
   }
 
+  /** Rest after a row: warm-up rest, the in-round rest of a superset, or the exercise's rest (0 = no timer). */
+  function restAfter(k, s) {
+    const it = S.current.items[k];
+    if (s.warm) return S.settings.warmRest;
+    const b = blockOf(k);
+    if (b && b.keys[b.keys.length - 1] !== k) return it.cfg.restBetween || 0;
+    if (it.cfg.rest === 0) return 0;
+    return it.cfg.rest || S.settings.restSec;
+  }
+
+  /** After a set finishes, the next set (same side) starts with the same weights unless you change them. */
+  function carryForward(k, i) {
+    const it = S.current.items[k];
+    const s = it.sets[i];
+    if (s.warm) return;
+    // The very next set (for one side at a time, that's the other side) and the next set on this side.
+    const free = (x, j) => j > i && !x.warm && !x.start && !x.end;
+    const targets = new Set([
+      it.sets.findIndex(free),
+      it.sets.findIndex((x, j) => free(x, j) && (x.side || '') === (s.side || '')),
+    ]);
+    targets.forEach((n) => {
+      if (n < 0) return;
+      const next = it.sets[n];
+      if (next.kg === '' && s.kg !== '' && next.mode === s.mode) next.kg = s.kg;
+      if (it.cfg.style === 'ultimate') regenUltimate(k, n);
+      else s.drops.forEach((d, j) => next.drops[j] && next.drops[j].kg === '' && d.kg !== '' && (next.drops[j].kg = d.kg));
+    });
+  }
+
   function endSet(k, i) {
     const c = S.current;
     const it = c.items[k];
     const def = exDef(it.name);
     const s = it.sets[i];
-    const now = new Date();
-    s.end = now.toISOString();
+    s.end = new Date().toISOString();
     const ph = placeholder(k, i);
-    if (s.kg === '' && (!def.bodyweight || s.mode === 'Weighted') && ph.kg != null) s.kg = fmt(ph.kg);
-    if (s.mode === 'Band' && !String(s.band || '').trim()) s.band = 'Purple';
+    if (s.kg === '' && (!def.bodyweight || s.mode === 'Weighted') && ph.kg != null) {
+      s.kg = fmt(ph.kg);
+      if (it.cfg.style === 'ultimate') regenUltimate(k, i);
+    }
+    s.drops.forEach((d, j) => {
+      if (d.kg === '') {
+        const dp = dropPlaceholder(k, i, j);
+        if (dp.kg != null) d.kg = fmt(dp.kg);
+      }
+    });
+    if (s.mode === 'Band' && !String(s.band || '').trim()) s.band = it.cfg.band || 'Purple';
+    carryForward(k, i);
     c.lastEnd = s.end;
-    const b = blockOf(k);
-    c.restCountdown = !!s.warm || !b || b.keys[b.keys.length - 1] === k;
-    c.restBase = s.warm ? S.settings.warmRest : blockRest(k);
+    const target = restAfter(k, s);
+    c.restCountdown = target > 0;
+    c.restBase = target;
     c.restWarm = !!s.warm;
     c.restExtra = 0;
     c.beepedAt = null;
@@ -876,7 +1001,7 @@
     const c = S.current;
     if (sessionStats().any) {
       queueSession();
-      toast('Workout saved');
+      toast('Workout Saved');
     } else {
       dropSession(c.session);
     }
@@ -885,13 +1010,14 @@
   function discardWorkout() {
     forEachSet((k, i, s) => s.end && unqueueRows(rowIds(k, s)));
     dropSession(S.current.session);
-    toast('Workout discarded');
+    toast('Workout Discarded');
     closeWorkout();
   }
   function closeWorkout() {
     S.current = null;
     S.modal = null;
     S.reorder = false;
+    S.pairing = null;
     persist();
     invalidate();
     keepAwake(false);
@@ -909,7 +1035,7 @@
     S.editingNote = null;
     render();
     scheduleSync();
-    toast(text.trim() ? 'Note saved' : 'Note removed');
+    toast(text.trim() ? 'Note Saved' : 'Note Removed');
   }
 
   // ---------- Sync with the Google Sheet ----------
@@ -1049,10 +1175,11 @@
     return `<span>${changes} waiting to upload</span>`;
   }
 
-  // ---------- Rest timer, sound, screen ----------
+  // ---------- Sounds, screen and timers ----------
   let actx = null;
   function unlockAudio() {
     try {
+      // "transient" asks iOS to dip other audio (your music) while the short sound plays.
       if (navigator.audioSession) navigator.audioSession.type = 'transient';
     } catch (e) {}
     try {
@@ -1060,25 +1187,46 @@
       if (actx.state !== 'running') actx.resume();
     } catch (e) {}
   }
-  function beep() {
+  function tone(t0, freq, dur, opts) {
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = (opts && opts.type) || 'sine';
+    o.frequency.setValueAtTime(freq, t0);
+    if (opts && opts.to) o.frequency.exponentialRampToValueAtTime(opts.to, t0 + dur);
+    const peak = (opts && opts.gain) || 0.6;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g);
+    g.connect(actx.destination);
+    o.start(t0);
+    o.stop(t0 + dur + 0.05);
+  }
+  function bell(t0, base) {
+    [1, 2.76, 5.4].forEach((m, n) => tone(t0, base * m, 1.1 - n * 0.3, { gain: 0.45 / (n + 1) }));
+  }
+  function playSound(name) {
     if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-    if (!S.settings.sound || !actx) return;
+    if (!actx || name === 'off') return;
     try {
       if (actx.state !== 'running') actx.resume();
-      const t0 = actx.currentTime + 0.05;
-      [0, 0.28, 0.56].forEach((d, i) => {
-        const o = actx.createOscillator();
-        const g = actx.createGain();
-        o.type = 'sine';
-        o.frequency.value = i === 2 ? 1320 : 880;
-        g.gain.setValueAtTime(0.0001, t0 + d);
-        g.gain.exponentialRampToValueAtTime(0.7, t0 + d + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.22);
-        o.connect(g);
-        g.connect(actx.destination);
-        o.start(t0 + d);
-        o.stop(t0 + d + 0.25);
-      });
+      const t = actx.currentTime + 0.05;
+      if (name === 'bleep') {
+        // The fitness "beep test" double tone, played twice.
+        [0, 0.7].forEach((d) => {
+          tone(t + d, 1040, 0.16, { type: 'square', gain: 0.25 });
+          tone(t + d + 0.2, 1040, 0.32, { type: 'square', gain: 0.25 });
+        });
+      } else if (name === 'bell') {
+        [0, 0.32, 0.64].forEach((d) => bell(t + d, 1100));
+      } else if (name === 'chirp') {
+        [0, 0.18, 0.6, 0.78].forEach((d) => tone(t + d, 700, 0.14, { to: 1600, gain: 0.5 }));
+      } else if (name === 'pips') {
+        [0, 0.35, 0.7].forEach((d) => tone(t + d, 1000, 0.1, { gain: 0.55 }));
+        tone(t + 1.05, 1000, 0.5, { gain: 0.55 });
+      } else {
+        [0, 0.28, 0.56].forEach((d, n) => tone(t + d, n === 2 ? 1320 : 880, 0.22, { gain: 0.7 }));
+      }
     } catch (e) {}
   }
 
@@ -1106,7 +1254,7 @@
     if (!c) return;
     const now = Date.now();
     const w = $('#wclock');
-    if (w) w.textContent = c.firstStart ? clock((now - new Date(c.firstStart)) / 1000) : 'not started';
+    if (w) w.textContent = c.firstStart ? clock((now - new Date(c.firstStart)) / 1000) : '0:00';
     const t = $('#st-time');
     const run = runningSet();
     if (run) {
@@ -1118,20 +1266,26 @@
     }
     if (!c.lastEnd) return;
     const el = (now - new Date(c.lastEnd)) / 1000;
-    if (t) t.textContent = clock(el);
-    if (!c.restCountdown) return;
+    if (!c.restCountdown) {
+      if (t) t.textContent = clock(el);
+      return;
+    }
     const target = restTarget();
-    const over = el >= target;
+    const left = target - el;
+    const over = left <= 0;
     const st = $('#status');
     if (st) st.classList.toggle('over', over);
+    if (t) t.textContent = over ? '+' + clock(-left) : clock(Math.ceil(left));
+    const lb = $('#st-label');
+    if (lb) lb.textContent = over ? 'Rest Over · Start Your Next Set' : c.restWarm ? 'Next Set In (After Warm-Up)' : 'Next Set In';
     const bar = $('#st-bar');
     if (bar) bar.style.width = `${Math.min(100, (el / target) * 100)}%`;
     const tg = $('#st-target');
-    if (tg) tg.textContent = over ? `${clock(el - target)} over` : `of ${clock(target)}`;
+    if (tg) tg.textContent = `Rest ${clock(target)}`;
     if (over && c.beepedAt !== c.lastEnd) {
       c.beepedAt = c.lastEnd;
       persist();
-      if (el - target < 5) beep();
+      if (-left < 5) playSound(S.settings.sound);
     }
   }
 
@@ -1178,7 +1332,7 @@
       if (S.current && r.Session === S.current.session) return;
       let s = by.get(r.Session);
       if (!s) by.set(r.Session, (s = { session: r.Session, day: r.Day, date: r.Date, time: r.Time || '', sets: 0 }));
-      if (r.Side !== 'R') s.sets++;
+      if (r.Side !== 'R' && !num(r.Drop) && r.Type !== 'Warm-up') s.sets++;
       if (`${r.Date} ${r.Time}` < `${s.date} ${s.time}`) {
         s.date = r.Date;
         s.time = r.Time || '';
@@ -1194,26 +1348,32 @@
   function startView() {
     const sessions = recentSessions();
     const lastByDay = {};
+    const lens = {};
     sessions.forEach((s) => {
       if (!lastByDay[s.day]) lastByDay[s.day] = s.date;
+      if (s.length) (lens[s.day] = lens[s.day] || []).push(s.length);
     });
     const days = DAYS.map((d) => {
       const n = (S.library.days[d] || []).reduce((a, it) => a + it.sets * it.names.length, 0);
+      const l = lens[d];
+      const avg = l ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null;
       return `<button class="day" data-action="start" data-day="${d}">
         <span class="day-name">${d}</span>
-        <span class="muted small">${n} sets · ${lastByDay[d] ? 'last ' + esc(daysAgo(lastByDay[d])) : 'not done yet'}</span>
+        <span class="day-stat">${avg ? `Avg ${avg} Min` : `${n} Sets`}</span>
+        <span class="muted small">${lastByDay[d] ? 'Last ' + esc(daysAgo(lastByDay[d])) : 'Not done yet'}</span>
       </button>`;
     }).join('');
     const recent = sessions.slice(0, 8).map(
       (s) => `<li><div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}</span></div>
         <div class="muted small">${s.sets} sets${s.length ? ` · ${s.length} min` : ''}</div></li>`
     ).join('');
-    return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start a workout</h1><div class="syncline">${syncText()}</div></div></div></header>
+    return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start A Workout</h1><div class="syncline">${syncText()}</div></div></div></header>
       <div class="day-grid">${days}</div>
-      <button class="btn wide" data-action="start" data-day="Other">Empty workout</button>
-      ${recent ? `<h2>Recent workouts</h2><ul class="list">${recent}</ul>` : ''}`;
+      <button class="btn wide" data-action="start" data-day="Other">Empty Workout</button>
+      ${recent ? `<h2>Recent Workouts</h2><ul class="list">${recent}</ul>` : ''}`;
   }
 
+  /** The pinned panel: total time, plus the running set or the countdown to the next set. */
   function statusHtml() {
     const c = S.current;
     const run = runningSet();
@@ -1221,21 +1381,21 @@
       const it = c.items[run.k];
       const tgt = targetText(run.k, run.i, true);
       return `<div id="status" class="status run">
-        <div class="st-main"><span class="st-label">${run.s.warm ? 'Warm-up' : 'Set'} in progress · ${esc(it.name)} ${setLabel(run.k, run.i)}</span><b id="st-time" class="st-time"></b>
-          ${tgt ? `<span class="st-beat">beat ${esc(tgt)}</span>` : ''}</div>
-        <button class="btn small solid" data-action="end-running">End set</button>
+        <div class="st-main"><span class="st-label">${run.s.warm ? 'Warm-Up' : 'Set'} In Progress · ${esc(it.name)} ${setLabel(run.k, run.i)}</span>
+          <b id="st-time" class="st-big"></b>${tgt ? `<span class="st-beat">Beat ${esc(tgt)}</span>` : ''}</div>
+        <button class="btn solid" data-action="end-running">End Set</button>
       </div>`;
     }
-    if (!c.lastEnd) return '<div id="status" hidden></div>';
+    if (!c.lastEnd) return '<div id="status" class="status idle"><div class="st-main"><span class="st-label">Ready · Tap Start On Your First Set</span></div></div>';
     if (!c.restCountdown) {
       return `<div id="status" class="status">
-        <div class="st-main"><span class="st-label">Rest</span><b id="st-time" class="st-time"></b><span class="muted small">superset: next exercise</span></div>
+        <div class="st-main"><span class="st-label">Resting · No Timer</span><b id="st-time" class="st-big"></b></div>
       </div>`;
     }
     return `<div id="status" class="status">
-        <div class="st-main"><span class="st-label">${c.restWarm ? 'Rest after warm-up' : 'Rest'}</span><b id="st-time" class="st-time"></b><span id="st-target" class="st-target"></span>
+        <div class="st-main"><span id="st-label" class="st-label">Next Set In</span><b id="st-time" class="st-big"></b><span id="st-target" class="st-target"></span>
           <div class="bar"><div id="st-bar"></div></div></div>
-        <button class="btn small" data-action="rest-add">+30s</button>
+        <button class="btn" data-action="rest-add">+30s</button>
       </div>`;
   }
 
@@ -1248,19 +1408,20 @@
       if (s.end) done++;
     });
     return `<div class="sticky">
-        <header class="top">
-          <div><h1>${esc(c.day)}</h1><div class="sub"><span id="wclock"></span> · ${done}/${total} sets</div></div>
+        <div class="topbar">
+          <div class="tb-left"><div class="tb-day">${esc(c.day)}</div><div class="tb-sets">${done}/${total} Sets</div></div>
+          <div class="tb-total"><span>Total</span><b id="wclock"></b></div>
           <button class="btn primary" data-action="finish">Finish</button>
-        </header>
+        </div>
         ${statusHtml()}
       </div>
       ${
         S.reorder
           ? reorderHtml()
-          : `<div class="list-tools"><button class="link" data-action="reorder">⇅ Reorder exercises</button></div>
+          : `<div class="list-tools"><button class="link" data-action="reorder">⇅ Reorder Exercises</button></div>
       ${c.blocks.map(blockHtml).join('')}
       <div class="add-ex">
-        <input id="exsearch" type="search" placeholder="Add any exercise, or create a new one" autocomplete="off" autocorrect="off" enterkeyhint="search" aria-label="Add an exercise">
+        <input id="exsearch" type="search" placeholder="Add Any Exercise, Or Create A New One" autocomplete="off" autocorrect="off" enterkeyhint="search" aria-label="Add an exercise">
         <div id="exresults" class="results"></div>
       </div>`
       }
@@ -1270,7 +1431,6 @@
 
   // ---------- Reordering during a workout ----------
   const blockNames = (b) => b.keys.map((k) => S.current.items[k].name);
-  /** Index of the block you most recently started or finished a set in, or -1. */
   function lastWorkedIndex(blocks) {
     let best = -1;
     let at = '';
@@ -1287,7 +1447,6 @@
     );
     return best;
   }
-  /** Set numbers carry on across an exercise that appears twice, so re-send those after a move. */
   function afterReorder() {
     const counts = {};
     S.current.blocks.forEach((b) => blockNames(b).forEach((n) => (counts[n] = (counts[n] || 0) + 1)));
@@ -1299,7 +1458,6 @@
     persist();
     render();
   }
-
   function reorderHtml() {
     const c = S.current;
     const worked = lastWorkedIndex(c.blocks);
@@ -1321,7 +1479,7 @@
             ? '<span class="ro-tag">Current</span>'
             : isNext
               ? '<span class="ro-tag">Next</span>'
-              : `<button class="btn small" data-action="ro-next" ${at} aria-label="Do ${esc(label)} next">Do next</button>`;
+              : `<button class="btn small" data-action="ro-next" ${at}>Do Next</button>`;
         return `<li class="${total && done === total ? 'finished' : ''}">
           <span class="ro-name">${esc(label)}<span class="muted small">${done}/${total}</span></span>
           ${nextBtn}
@@ -1331,10 +1489,10 @@
       })
       .join('');
     const canSave = DAYS.includes(c.day);
-    return `<div class="reorder-head"><h2>Reorder exercises</h2><button class="btn small primary" data-action="reorder-done">Done</button></div>
-      <p class="muted small">“Do next” puts an exercise straight after the one you’re on.</p>
+    return `<div class="reorder-head"><h2>Reorder Exercises</h2><button class="btn small primary" data-action="reorder-done">Done</button></div>
+      <p class="muted small">“Do Next” puts an exercise straight after the one you’re on.</p>
       <ul class="reorder-list">${rows}</ul>
-      ${canSave ? `<button class="btn wide" data-action="ro-save">Save this order for every ${esc(c.day)} day</button>` : ''}`;
+      ${canSave ? `<button class="btn wide" data-action="ro-save">Save This Order For Every ${esc(c.day)} Day</button>` : ''}`;
   }
 
   function lastLine(k, prefix) {
@@ -1342,23 +1500,27 @@
     const last = lastOf(k);
     const label = prefix ? `${esc(it.name)}: ` : '';
     if (!last) return prefix ? `${label}<span class="muted">no history yet</span>` : '';
-    // Only the working sets this card covers (matters when an exercise appears twice in a day).
     const nos = it.sets.map((s, i) => (s.warm ? null : setNo(k, i))).filter((x) => x != null);
     let entries = last.entries.filter((e) => nos.includes(e.set));
     if (!entries.length) entries = last.entries;
     return `${label}Last time (${esc(daysAgo(last.date))}): ${esc(summary(entries, exDef(it.name)))}`;
   }
 
-  function noteHtml(name, compact) {
+  /** In a workout a note is only shown (edit it in the Exercises tab); with no note, nothing is shown. */
+  function workoutNote(name, compact) {
+    const n = noteOf(name);
+    return n ? `<div class="note${compact ? ' compact' : ''}">${ICON.pin}<span>${esc(n)}</span></div>` : '';
+  }
+  function noteEditor(name) {
     if (S.editingNote === name) {
       return `<div class="note-edit">
         <textarea id="note-input" rows="3" placeholder="Seat 4, back pad 2, handles on the inside">${esc(noteOf(name))}</textarea>
-        <div class="row-btns"><button class="btn small primary" data-action="note-save" data-name="${esc(name)}">Save note</button>
+        <div class="row-btns"><button class="btn small primary" data-action="note-save" data-name="${esc(name)}">Save Note</button>
         <button class="btn small ghost" data-action="note-cancel">Cancel</button></div></div>`;
     }
     const n = noteOf(name);
-    if (n) return `<button class="note${compact ? ' compact' : ''}" data-action="note-edit" data-name="${esc(name)}">${ICON.pin}<span>${esc(n)}</span></button>`;
-    return compact ? '' : `<button class="note-add" data-action="note-edit" data-name="${esc(name)}">+ Add a note (seat, settings…)</button>`;
+    if (n) return `<button class="note editable" data-action="note-edit" data-name="${esc(name)}">${ICON.pin}<span>${esc(n)}</span><span class="note-edit-tag">Edit</span></button>`;
+    return `<button class="note-add" data-action="note-edit" data-name="${esc(name)}">+ Add A Note (Seat, Settings…)</button>`;
   }
 
   function blockHtml(b) {
@@ -1377,130 +1539,119 @@
     const runningHere = b.keys.some((k) => c.items[k].sets.some((s) => s.start && !s.end));
     const head = `<button class="card-head" data-action="toggle" data-block="${b.id}" aria-expanded="${open}">
         <span class="card-title">${sup ? '<span class="tag">Superset</span>' : ''}<span>${esc(names.join(' + '))}</span></span>
-        <span class="count ${runningHere ? 'live' : total && done === total ? 'ok' : ''}">${runningHere ? 'live' : `${done}/${total}`}</span>
+        <span class="count ${runningHere ? 'live' : total && done === total ? 'ok' : ''}">${runningHere ? 'Live' : `${done}/${total}`}</span>
       </button>`;
     if (!open) {
       const lines = b.keys.map((k) => lastLine(k, sup)).filter(Boolean).join('<br>');
-      const notes = [...new Set(names)].map((n) => noteHtml(n, true)).join('');
+      const notes = [...new Set(names)].map((n) => workoutNote(n, true)).join('');
       return `<section class="card" id="b-${b.id}">${head}<div class="card-peek">${lines ? `<div class="last muted small">${lines}</div>` : ''}${notes}</div></section>`;
     }
-    let body = '';
-    if (sup) {
-      const without = [];
-      [...new Set(names)].forEach((n) => {
-        if (noteOf(n) || S.editingNote === n) body += `<div class="sub-name">${esc(n)}</div>${noteHtml(n)}`;
-        else without.push(n);
-      });
-      if (without.length) {
-        body += `<div class="note-links">${without
-          .map((n) => `<button class="link" data-action="note-edit" data-name="${esc(n)}">+ ${esc(n)} note</button>`)
-          .join('')}</div>`;
-      }
-    } else {
-      body += noteHtml(names[0]);
-    }
-    b.keys.forEach((k) => {
-      const it = c.items[k];
-      const def = exDef(it.name);
-      if (!hasVariations(def)) return;
-      const opts = def.variations.map((v) => v.name);
-      if (it.variation && !opts.includes(it.variation)) opts.push(it.variation);
-      body += `<label class="var-row"><span>${sup ? esc(it.name) + ' ' : ''}${esc((def.label || 'Type').toLowerCase())}</span><select data-var="${k}">${opts
-        .map((o) => `<option ${o === it.variation ? 'selected' : ''}>${esc(o)}</option>`)
-        .join('')}<option value="__other">Other…</option></select></label>`;
-    });
+    let body = [...new Set(names)].map((n) => (sup && noteOf(n) ? `<div class="sub-name">${esc(n)}</div>` : '') + workoutNote(n)).join('');
+    b.keys.forEach((k) => (body += choiceSelects(k, sup)));
     const lines = b.keys.map((k) => lastLine(k, sup) || '<span class="muted">No history yet</span>').join('<br>');
     body += `<div class="last small">${lines}</div>`;
     if (S.pairing === b.id) body += pairPickerHtml(b);
     if (sup) {
-      // Warm-ups first, then working sets in rounds (one set of each exercise per round).
-      const warm = b.keys.some((k) => warmCount(c.items[k]));
-      if (warm) body += '<div class="round-label muted small">Warm-up</div>';
-      b.keys.forEach((k) =>
-        c.items[k].sets.forEach((s, i) => {
-          if (s.warm) body += setRowHtml(k, i, `${setLabel(k, i)} ${c.items[k].name}`);
-        })
-      );
-      const rounds = Math.max(0, ...b.keys.map((k) => workCount(c.items[k])));
+      if (b.keys.some((k) => warmRows(c.items[k]))) body += '<div class="round-label muted small">Warm-Up</div>';
+      b.keys.forEach((k) => c.items[k].sets.forEach((s, i) => s.warm && (body += setRowHtml(k, i, `${setLabel(k, i)} ${c.items[k].name}`))));
+      const rounds = Math.max(0, ...b.keys.map((k) => unitsOf(k)));
       for (let r = 0; r < rounds; r++) {
         body += `<div class="round-label muted small">Round ${r + 1}</div>`;
-        b.keys.forEach((k) => {
-          const i = workAt(k, r);
-          if (i >= 0) body += setRowHtml(k, i, c.items[k].name);
-        });
+        b.keys.forEach((k) => unitRows(k, r).forEach((i) => (body += setRowHtml(k, i, c.items[k].name))));
       }
     } else {
       const k = b.keys[0];
-      const def = itemDef(k);
-      if (def.bodyweight) body += '<div class="set-head bw"><span></span><span>Type</span><span>kg / band</span><span>Reps</span><span></span></div>';
-      else if (oneArm(k)) body += '<div class="set-head onearm"><span></span><span>kg</span><span>Left</span><span>Right</span><span></span></div>';
-      else body += '<div class="set-head normal"><span></span><span>kg</span><span>Reps</span><span></span></div>';
+      body += headRow(k);
       c.items[k].sets.forEach((s, i) => (body += setRowHtml(k, i)));
     }
     const at = `data-block="${b.id}"`;
+    const ss = S.settings.supersets
+      ? sup
+        ? `<button class="btn small ghost" data-action="unlink" ${at}>${ICON.link}Unlink Superset</button>`
+        : `<button class="btn small ghost" data-action="pair" ${at}>${ICON.link}Superset With…</button>`
+      : '';
     body += `<div class="card-actions">
-        <button class="btn small" data-action="add-warm" ${at}>+ Warm-up</button>
-        <button class="btn small" data-action="add-set" ${at}>+ ${sup ? 'Add round' : 'Add set'}</button>
-        <button class="btn small ghost" data-action="remove-set" ${at}>Remove last</button>
-        ${
-          sup
-            ? `<button class="btn small ghost" data-action="unlink" ${at}>${ICON.link}Unlink superset</button>`
-            : `<button class="btn small ghost" data-action="pair" ${at}>${ICON.link}Superset with…</button>`
-        }
-        <button class="btn small ghost danger" data-action="remove-block" ${at}>Remove exercise</button>
+        <button class="btn small" data-action="add-warm" ${at}>+ Warm-Up</button>
+        <button class="btn small" data-action="add-set" ${at}>+ ${sup ? 'Add Round' : 'Add Set'}</button>
+        <button class="btn small ghost" data-action="remove-set" ${at}>Remove Last</button>
+        ${ss}
+        <button class="btn small ghost danger" data-action="remove-block" ${at}>Remove Exercise</button>
       </div>`;
     return `<section class="card open" id="b-${b.id}">${head}<div class="card-body">${body}</div></section>`;
   }
 
+  function choiceSelects(k, sup) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    return groupsOf(def)
+      .map((g) => {
+        const cur = it.choices[g.label];
+        return `<label class="var-row"><span>${sup ? esc(it.name) + ' ' : ''}${esc(g.label)}</span><select data-choice="${esc(g.label)}" data-k="${k}">${g.choices
+          .map((ch) => `<option ${ch.name === cur ? 'selected' : ''}>${esc(ch.name)}</option>`)
+          .join('')}<option value="__other">Other…</option></select></label>`;
+      })
+      .join('');
+  }
+
+  function rowType(k) {
+    const def = itemDef(k);
+    return def.bodyweight ? (def.partials ? 'bwp' : 'bw') : 'normal';
+  }
+  function headRow(k) {
+    const def = itemDef(k);
+    const type = rowType(k);
+    if (type === 'normal') return `<div class="set-head normal"><span></span><span>${def.kgLabel || 'Kg'}</span><span></span><span>Reps</span></div>`;
+    return `<div class="set-head ${type}"><span></span><span>Type</span><span>Kg / Band</span><span></span><span>Reps</span>${type === 'bwp' ? '<span>Partial</span>' : ''}</div>`;
+  }
+
   function pairPickerHtml(b) {
     const others = S.current.blocks.filter((o) => o !== b);
-    const label = blockNames(b).join(' + ');
     return `<div class="pair-box">
-      <div class="small">Superset <b>${esc(label)}</b> with:</div>
+      <div class="small">Superset <b>${esc(blockNames(b).join(' + '))}</b> With:</div>
       <div class="chips">${
         others.length
           ? others.map((o) => `<button class="chip" data-action="pair-with" data-block="${o.id}">${esc(blockNames(o).join(' + '))}</button>`).join('')
           : '<span class="muted small">No other exercises in this workout yet.</span>'
       }</div>
-      <div class="muted small">Not listed? Add it with the search box at the bottom, then pair it.</div>
       <button class="link" data-action="pair-cancel">Cancel</button>
     </div>`;
   }
 
+  /** One set row: number, weight, the Start/End button, then reps (only enterable after End). */
   function setRowHtml(k, i, label) {
     const it = S.current.items[k];
     const def = exDef(it.name);
     const s = it.sets[i];
-    const arm = oneArm(k);
     const ph = placeholder(k, i);
     const a = `data-k="${k}" data-i="${i}"`;
-    const input = (f, v, p, mode, aria, need) =>
-      `<input class="${need ? 'need' : ''}" data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}">`;
-    const type = def.bodyweight ? 'bw' : arm ? 'onearm' : 'normal';
-    const state = (s.end ? ' done' : s.start ? ' running' : '') + (s.warm ? ' warm' : '');
+    const locked = !s.end;
+    const input = (f, v, p, mode, aria, extra) =>
+      `<input class="${extra || ''}" data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}"${
+        (f === 'reps' || f === 'partials') && locked ? ' disabled' : ''
+      }>`;
+    const type = rowType(k);
+    const state = (s.end ? ' done' : s.start ? ' running' : '') + (s.warm ? ' warm' : '') + (s.side ? ' side' : '');
     let h = `<div class="set-row ${type}${label ? ' labeled' : ''}${state}">`;
     h += `<span class="set-no">${label ? esc(label) : setLabel(k, i)}</span>`;
     if (def.bodyweight) {
       h += `<select data-f="mode" ${a} aria-label="Set type">${[
         ['Bodyweight', 'BW'],
-        ['Weighted', '+kg'],
+        ['Weighted', '+Kg'],
         ['Band', 'Band'],
       ]
         .map(([v, t]) => `<option value="${v}" ${s.mode === v ? 'selected' : ''}>${t}</option>`)
         .join('')}</select>`;
       if (s.mode === 'Weighted') h += input('kg', s.kg, ph.kg, 'decimal', 'Added kg');
-      else if (s.mode === 'Band')
-        h += `<input data-f="band" ${a} value="${esc(s.band)}" placeholder="Purple" autocomplete="off" autocapitalize="words" aria-label="Band">`;
+      else if (s.mode === 'Band') h += `<input data-f="band" ${a} value="${esc(s.band)}" placeholder="Purple" autocomplete="off" autocapitalize="words" aria-label="Band">`;
       else h += '<span class="dash">—</span>';
     } else {
-      h += input('kg', s.kg, ph.kg, 'decimal', 'kg');
+      h += input('kg', s.kg, ph.kg, 'decimal', def.kgLabel ? 'Added kg' : 'kg');
     }
-    const need = (v) => s.end && !s.warm && num(v) == null;
-    h += input('reps', s.reps, ph.reps, 'numeric', arm ? 'Left reps' : 'Reps', need(s.reps));
-    if (arm) h += input('repsR', s.repsR, ph.repsR, 'numeric', 'Right reps', need(s.repsR));
     if (s.end) h += `<button class="sbtn done" data-action="set-btn" ${a} aria-label="Done. Tap twice to undo">${ICON.check}</button>`;
     else if (s.start) h += `<button class="sbtn run" data-action="set-btn" ${a}><span>End</span><span class="rt" id="rt-${s.id}"></span></button>`;
     else h += `<button class="sbtn" data-action="set-btn" ${a}>Start</button>`;
+    h += input('reps', s.reps, ph.reps, 'numeric', 'Reps', s.end && !s.warm && num(s.reps) == null ? 'need' : '');
+    if (type === 'bwp') h += input('partials', s.partials, ph.partials, 'numeric', 'Partial reps');
     h += '</div>';
     (s.drops || []).forEach((d, j) => (h += dropRowHtml(k, i, j, label)));
     h += footerHtml(k, i, label);
@@ -1510,29 +1661,23 @@
   function dropRowHtml(k, i, j, label) {
     const s = S.current.items[k].sets[i];
     const d = s.drops[j];
-    const arm = oneArm(k);
     const ph = dropPlaceholder(k, i, j);
     const a = `data-k="${k}" data-i="${i}" data-d="${j}"`;
-    const input = (f, v, p, mode, aria) =>
-      `<input data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}">`;
-    let h = `<div class="drop-row ${arm ? 'onearm' : 'normal'}${label ? ' labeled' : ''}${s.end ? ' done' : ''}">`;
-    h += '<span class="drop-mark" aria-hidden="true">↳</span>';
-    h += input('kg', d.kg, ph.kg, 'decimal', `Drop ${j + 1} kg`);
-    h += input('reps', d.reps, ph.reps, 'numeric', arm ? `Drop ${j + 1} left reps` : `Drop ${j + 1} reps`);
-    if (arm) h += input('repsR', d.repsR, ph.repsR, 'numeric', `Drop ${j + 1} right reps`);
-    h += `<button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button></div>`;
-    return h;
+    return `<div class="drop-row normal${label ? ' labeled' : ''}${s.end ? ' done' : ''}">
+      <span class="drop-mark" aria-hidden="true">↳</span>
+      <input data-f="kg" ${a} value="${esc(d.kg)}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg">
+      <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button>
+      <input data-f="reps" ${a} value="${esc(d.reps)}" placeholder="${ph.reps == null ? '' : esc(ph.reps)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} reps"${s.end ? '' : ' disabled'}>
+    </div>`;
   }
 
-  /** The first working set of an exercise that hasn't been started: it gets the "to beat" line. */
   function isNextSet(k, i) {
     const sets = S.current.items[k].sets;
     if (sets.some((s) => s.start && !s.end)) return false;
-    const j = sets.findIndex((s) => !s.warm && !s.start && !s.end);
-    return j === i;
+    return sets.findIndex((s) => !s.warm && !s.start && !s.end) === i;
   }
 
-  /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ drop". */
+  /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
   function footerHtml(k, i, label) {
     const it = S.current.items[k];
     const s = it.sets[i];
@@ -1542,11 +1687,7 @@
       const prs = prsFor(k, i);
       if (prs.length) inner += `<span class="pr">${ICON.trophy}PR · ${esc(prs.join(' · '))}</span>`;
       const m = compareSet(k, i);
-      const one = (x, side) =>
-        x
-          ? `<span class="mk ${x.dir > 0 ? 'up' : x.dir < 0 ? 'down' : 'same'}">${side}${x.dir > 0 ? '▲' : x.dir < 0 ? '▼' : '='} ${esc(x.text)}</span>`
-          : '';
-      inner += m ? (m.one ? one(m.one, '') : one(m.L, 'L ') + one(m.R, 'R ')) : '';
+      if (m) inner += `<span class="mk ${m.dir > 0 ? 'up' : m.dir < 0 ? 'down' : 'same'}">${m.dir > 0 ? '▲' : m.dir < 0 ? '▼' : '='} ${esc(m.text)}</span>`;
     }
     if (s.end) {
       const bits = [];
@@ -1559,13 +1700,12 @@
       if (t) inner += `<span class="target">${esc(t)}</span>`;
     }
     if (s.warm) {
-      if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ remove warm-up</button>`;
-    } else {
-      const lastWork = workAt(k, workCount(it) - 1);
-      if (canDrop(k) && (s.start || s.end || i === lastWork || s.drops.length)) {
-        inner += `<button class="link drop-add" data-action="drop-add" ${a}>+ drop</button>`;
-      }
+      if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ Remove Warm-Up</button>`;
+    } else if (canDrop(k) && it.cfg.style !== 'ultimate' && it.cfg.style !== 'double') {
+      const lastRows = unitRows(k, unitsOf(k) - 1);
+      if (s.start || s.end || lastRows.includes(i) || s.drops.length) inner += `<button class="link drop-add" data-action="drop-add" ${a}>+ Drop</button>`;
     }
+    if (it.cfg.style === 'ultimate' && !s.warm && !s.drops.length && !s.end) inner += '<span class="muted">Drops fill in once you enter the weight</span>';
     return `<div class="markers${label ? ' indent' : ''}" id="ft-${s.id}"${inner ? '' : ' hidden'}>${inner}</div>`;
   }
 
@@ -1577,7 +1717,7 @@
     forEachSet((k, i, s) => {
       if (!s.end || s.warm) return;
       const m = compareSet(k, i);
-      if (m && [m.one, m.L, m.R].some((x) => x && x.dir > 0)) ups++;
+      if (m && m.dir > 0) ups++;
       volume += setVolume(k, s);
       const prs = prsFor(k, i);
       if (prs.length) prList.push(`${S.current.items[k].name} (${prs.join(', ')})`);
@@ -1587,19 +1727,19 @@
     return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
       <h2 id="mt">Finish ${esc(S.current.day)}?</h2>
       <div class="stats">
-        <div><b>${mins}</b><span>minutes</span></div>
-        <div><b>${st.sets}</b><span>working sets</span></div>
-        <div><b>${ups}</b><span>beat last time</span></div>
+        <div><b>${mins}</b><span>Minutes</span></div>
+        <div><b>${st.sets}</b><span>Working Sets</span></div>
+        <div><b>${ups}</b><span>Beat Last Time</span></div>
         <div class="${prList.length ? 'hot' : ''}"><b>${prList.length}</b><span>PRs</span></div>
-        <div><b>${st.avgRest != null ? clock(st.avgRest) : '–'}</b><span>average rest</span></div>
-        <div><b>${volume ? Math.round(volume).toLocaleString() : '–'}</b><span>kg volume</span></div>
+        <div><b>${st.avgRest != null ? clock(st.avgRest) : '–'}</b><span>Average Rest</span></div>
+        <div><b>${volume ? Math.round(volume).toLocaleString() : '–'}</b><span>Kg Volume</span></div>
       </div>
       ${prList.length ? `<p class="small"><b>New PRs:</b> ${esc(prList.join(' · '))}</p>` : ''}
       ${run ? '<p class="muted small">The set that’s running will be ended now.</p>' : ''}
       ${st.any || run ? '' : '<p class="muted">No sets finished, so nothing will be saved.</p>'}
-      <button class="btn primary wide" data-action="save-finish">${st.any || run ? 'Save workout' : 'Close workout'}</button>
-      <button class="btn wide" data-action="modal-close">Keep going</button>
-      ${st.any ? '<button class="btn ghost danger wide" data-action="discard">Discard workout</button>' : ''}
+      <button class="btn primary wide" data-action="save-finish">${st.any || run ? 'Save Workout' : 'Close Workout'}</button>
+      <button class="btn wide" data-action="modal-close">Keep Going</button>
+      ${st.any ? '<button class="btn ghost danger wide" data-action="discard">Discard Workout</button>' : ''}
     </div></div>`;
   }
 
@@ -1617,18 +1757,15 @@
     const inWorkout = new Set(S.current ? Object.values(S.current.items).map((it) => it.name) : []);
     const hits = names.filter((n) => words.every((w) => n.toLowerCase().includes(w))).slice(0, 8);
     let h = hits
-      .map(
-        (n) =>
-          `<button class="result" data-action="add-ex" data-name="${esc(n)}">${esc(n)}${inWorkout.has(n) ? ' <span class="muted small">· add again</span>' : ''}</button>`
-      )
+      .map((n) => `<button class="result" data-action="add-ex" data-name="${esc(n)}">${esc(n)}${inWorkout.has(n) ? ' <span class="muted small">· Add Again</span>' : ''}</button>`)
       .join('');
     if (!names.some((n) => n.toLowerCase() === q.toLowerCase())) {
-      h += `<button class="result create" data-action="create-ex" data-name="${esc(q)}">Create new exercise “${esc(q)}”</button>`;
+      h += `<button class="result create" data-action="create-ex" data-name="${esc(tc(q))}">Create New Exercise “${esc(tc(q))}”</button>`;
     }
     return h;
   }
 
-  // Exercises tab: notes, progress chart and history for one exercise
+  // ---------- Exercises tab ----------
   function exercisesWithHistory() {
     const latest = {};
     allSets().forEach((r) => {
@@ -1637,7 +1774,6 @@
     });
     return Object.keys(latest).sort((a, b) => latest[b].localeCompare(latest[a]));
   }
-
   function score(entries, def) {
     const withKg = !def.bodyweight && entries.some((e) => e.kg);
     if (withKg) {
@@ -1648,19 +1784,10 @@
           best = Math.max(best, e.kg * (1 + r / 30));
         })
       );
-      return {
-        value: Math.round(best * 10) / 10,
-        label: 'Estimated 1-rep max (kg)',
-        hint: 'Worked out from your best set, so it rises when either the weight or the reps go up.',
-      };
+      return { value: Math.round(best * 10) / 10, label: 'Estimated 1-Rep Max (Kg)', hint: 'Worked out from your best set, so it rises when either the weight or the reps go up.' };
     }
-    return {
-      value: entries.reduce((a, e) => a + (e.reps || 0) + (e.repsR || 0), 0),
-      label: 'Total reps per session',
-      hint: 'All reps across the session added together.',
-    };
+    return { value: entries.reduce((a, e) => a + (e.reps || 0) + (e.repsR || 0), 0), label: 'Total Reps Per Session', hint: 'All reps across the session added together.' };
   }
-
   function chartSvg(pts) {
     const W = Math.round(Math.max(280, Math.min(608, window.innerWidth - 64)));
     const H = 190;
@@ -1695,7 +1822,40 @@
     if (pts.length > 1) s += `<text x="${W - R}" y="${H - 6}" class="axis" text-anchor="end">${esc(niceDate(pts[pts.length - 1].date))}</text>`;
     return s + '</svg>';
   }
-
+  function recordsHtml(sessions, def) {
+    let heavy = null;
+    let best = null;
+    let bw = null;
+    const byKg = new Map();
+    sessions.forEach((s) =>
+      s.entries.forEach((e) => {
+        const reps = repsOf(e);
+        if (!reps) return;
+        const v = e.variation || 'Bodyweight';
+        if (def.bodyweight && v === 'Bodyweight') {
+          if (!bw || reps > bw.reps) bw = { reps, date: s.date };
+          return;
+        }
+        if ((def.bodyweight && v !== 'Weighted') || !e.kg) return;
+        if (!heavy || e.kg > heavy.kg || (e.kg === heavy.kg && reps > heavy.reps)) heavy = { kg: e.kg, reps, date: s.date };
+        const val = e1rm(e.kg, reps);
+        if (!def.bodyweight && (!best || val > best.val)) best = { val, kg: e.kg, reps, date: s.date };
+        const cur = byKg.get(e.kg);
+        if (!cur || reps > cur.reps) byKg.set(e.kg, { reps, date: s.date });
+      })
+    );
+    const rows = [];
+    const plus = def.bodyweight || def.kgLabel ? '+' : '';
+    if (heavy) rows.push(['Heaviest', `${plus}${fmt(heavy.kg)} kg × ${heavy.reps}`, heavy.date]);
+    if (best) rows.push(['Best Est. 1RM', `${fmt(Math.round(best.val * 10) / 10)} kg (${fmt(best.kg)} × ${best.reps})`, best.date]);
+    if (bw) rows.push(['Most Reps (Bodyweight)', `${bw.reps}`, bw.date]);
+    const reps = [...byKg.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
+    if (reps.length > 1) rows.push(['Rep Records', reps.map(([kg, r]) => `${plus}${fmt(kg)}×${r.reps}`).join(' · '), '']);
+    if (!rows.length) return '';
+    return `<section class="panel"><h2>${ICON.trophy}Records</h2><ul class="records">${rows
+      .map(([k, v, d]) => `<li><span class="muted">${esc(k)}</span><span><b>${esc(v)}</b>${d ? `<span class="muted small"> · ${esc(niceDate(d))}</span>` : ''}</span></li>`)
+      .join('')}</ul></section>`;
+  }
   function exercisesView() {
     let h = '<header class="top"><h1>Exercises</h1></header>';
     const recent = exercisesWithHistory();
@@ -1708,19 +1868,10 @@
     const def = exDef(P.name);
     const opt = (n) => `<option ${n === P.name ? 'selected' : ''}>${esc(n)}</option>`;
     h += `<select class="big-select" data-page="name" aria-label="Exercise">
-      ${recent.length ? `<optgroup label="Recently trained">${recent.slice(0, 12).map(opt).join('')}</optgroup>` : ''}
-      <optgroup label="All exercises">${all.filter((n) => !recent.slice(0, 12).includes(n)).map(opt).join('')}</optgroup></select>`;
-    const restOpts = [0, 60, 90, 120, 150, 180, 240, 300]
-      .map((v) => `<option value="${v}" ${(def.rest || 0) === v ? 'selected' : ''}>${v ? clock(v) : `Default (${clock(S.settings.restSec)})`}</option>`)
-      .join('');
-    h += `<section class="panel"><h2>Notes</h2>${noteHtml(P.name)}
-      <label class="field">Rest target<select data-exrest data-name="${esc(P.name)}">${restOpts}</select></label>
-      ${
-        def.bodyweight
-          ? ''
-          : `<label class="check"><input type="checkbox" data-exflag="dropLast" data-name="${esc(P.name)}" ${def.dropLast ? 'checked' : ''}> Drop set on the last set every time</label>`
-      }</section>`;
-    const vs = [...new Set((def.variations || []).map((v) => v.name).concat(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation))).filter(Boolean))];
+      ${recent.length ? `<optgroup label="Recently Trained">${recent.slice(0, 12).map(opt).join('')}</optgroup>` : ''}
+      <optgroup label="All Exercises">${all.filter((n) => !recent.slice(0, 12).includes(n)).map(opt).join('')}</optgroup></select>`;
+    h += `<section class="panel"><h2>Notes</h2>${noteEditor(P.name)}<p class="muted small">Notes show on the exercise during workouts.</p></section>`;
+    const vs = [...new Set(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation)).filter(Boolean))];
     if (!def.bodyweight && vs.length > 1) {
       if (!vs.includes(P.variation)) P.variation = '';
       h += `<div class="chips">${['', ...vs]
@@ -1748,110 +1899,140 @@
     return h;
   }
 
-  /** Personal records for one exercise: heaviest, best estimated 1-rep max, and rep records by weight. */
-  function recordsHtml(sessions, def) {
-    let heavy = null;
-    let best = null;
-    let bw = null;
-    const byKg = new Map();
-    sessions.forEach((s) =>
-      s.entries.forEach((e) => {
-        const reps = repsOf(e);
-        if (!reps) return;
-        const v = e.variation || 'Bodyweight';
-        if (def.bodyweight && v === 'Bodyweight') {
-          if (!bw || reps > bw.reps) bw = { reps, date: s.date };
-          return;
-        }
-        if ((def.bodyweight && v !== 'Weighted') || !e.kg) return;
-        if (!heavy || e.kg > heavy.kg || (e.kg === heavy.kg && reps > heavy.reps)) heavy = { kg: e.kg, reps, date: s.date };
-        const val = e1rm(e.kg, reps);
-        if (!def.bodyweight && (!best || val > best.val)) best = { val, kg: e.kg, reps, date: s.date };
-        const cur = byKg.get(e.kg);
-        if (!cur || reps > cur.reps) byKg.set(e.kg, { reps, date: s.date });
-      })
-    );
-    const rows = [];
-    const plus = def.bodyweight ? '+' : '';
-    if (heavy) rows.push(['Heaviest', `${plus}${fmt(heavy.kg)} kg × ${heavy.reps}`, heavy.date]);
-    if (best) rows.push(['Best est. 1RM', `${fmt(Math.round(best.val * 10) / 10)} kg (${fmt(best.kg)} × ${best.reps})`, best.date]);
-    if (bw) rows.push(['Most reps (bodyweight)', `${bw.reps}`, bw.date]);
-    const reps = [...byKg.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
-    if (reps.length > 1) rows.push(['Rep records', reps.map(([kg, r]) => `${plus}${fmt(kg)}×${r.reps}`).join(' · '), '']);
-    if (!rows.length) return '';
-    return `<section class="panel"><h2>${ICON.trophy}Records</h2><ul class="records">${rows
-      .map(([k, v, d]) => `<li><span class="muted">${esc(k)}</span><span><b>${esc(v)}</b>${d ? `<span class="muted small"> · ${esc(niceDate(d))}</span>` : ''}</span></li>`)
-      .join('')}</ul></section>`;
+  // ---------- Settings and Workout Setup ----------
+  const restLabel = (v) => (v === 0 ? 'No Rest' : v ? clock(v) : `Default (${clock(S.settings.restSec)})`);
+  function setupSummary(it) {
+    const bits = [`${it.sets} ${it.names.length > 1 ? 'Rounds' : 'Sets'}`, it.rest === 0 ? 'No Rest' : clock(it.rest || S.settings.restSec)];
+    if (it.warmups) bits.push(`${it.warmups} Warm-Up${it.warmups > 1 ? 's' : ''}`);
+    if (it.style && it.style !== 'normal') bits.push((STYLES.find((s) => s[0] === it.style) || [])[1]);
+    it.names.forEach((n) => {
+      const ch = it.choices && it.choices[n];
+      if (ch) bits.push(Object.values(ch).join(' · '));
+    });
+    return bits.join(' · ');
   }
-
-  // Settings
+  function setupEditor(d, idx) {
+    const it = S.library.days[d][idx];
+    const at = `data-day="${d}" data-idx="${idx}"`;
+    const sel = (field, opts, cur) =>
+      `<select data-setup="${field}" ${at}>${opts.map(([v, t]) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+    const restOpts = [['', restLabel(null)], [0, 'No Rest']].concat([30, 45, 60, 90, 120, 150, 180, 240, 300].map((v) => [v, clock(v)]));
+    const stepper = (field, val, unit) =>
+      `<span class="stepper"><button class="icon-btn" data-action="setup-step" data-field="${field}" data-delta="-1" ${at} aria-label="Fewer ${unit}">−</button><b>${val || 0}</b><button class="icon-btn" data-action="setup-step" data-field="${field}" data-delta="1" ${at} aria-label="More ${unit}">+</button></span>`;
+    let h = '<div class="setup-edit">';
+    h += `<div class="setup-row"><span>${it.names.length > 1 ? 'Rounds' : 'Sets'}</span>${stepper('sets', it.sets, 'sets')}</div>`;
+    h += `<div class="setup-row"><span>Warm-Up Sets</span>${stepper('warmups', it.warmups, 'warm-up sets')}</div>`;
+    h += `<label class="setup-row"><span>Rest After Set</span>${sel('rest', restOpts, it.rest == null ? '' : it.rest)}</label>`;
+    if (it.names.length > 1) {
+      h += `<label class="setup-row"><span>Rest Between Exercises</span>${sel('restBetween', [[0, 'No Timer']].concat([15, 30, 45, 60, 90, 120].map((v) => [v, clock(v)])), it.restBetween || 0)}</label>`;
+    }
+    const anyWeighted = it.names.some((n) => !exDef(n).bodyweight);
+    if (anyWeighted) {
+      h += `<label class="setup-row"><span>Set Style</span>${sel('style', STYLES, it.style || 'normal')}</label>`;
+      if (it.style === 'ultimate') {
+        h += `<label class="setup-row"><span>Drop By (Kg)</span>${sel('step', [[1, '1'], [1.25, '1.25'], [2.5, '2.5'], [5, '5']], it.step || 2.5)}</label>`;
+        h += `<label class="setup-row"><span>Lowest Weight Per Set</span><input data-setup="floors" ${at} value="${esc((it.floors || [5, 2.5]).join(', '))}" placeholder="5, 2.5" inputmode="decimal"></label>`;
+      }
+    }
+    it.names.forEach((n) => {
+      const def = exDef(n);
+      groupsOf(def).forEach((g) => {
+        const cur = (it.choices && it.choices[n] && it.choices[n][g.label]) || g.choices[0].name;
+        h += `<label class="setup-row"><span>${it.names.length > 1 ? esc(n) + ' ' : ''}${esc(g.label)}</span><select data-setup-choice data-name="${esc(n)}" data-label="${esc(g.label)}" ${at}>${g.choices
+          .map((ch) => `<option ${ch.name === cur ? 'selected' : ''}>${esc(ch.name)}</option>`)
+          .join('')}</select></label>`;
+      });
+    });
+    if (it.names.some((n) => exDef(n).bodyweight)) {
+      const modes = it.modes || [];
+      const short = { Bodyweight: 'BW', Band: 'Band', Weighted: '+Kg' };
+      h += `<div class="setup-row"><span>Set Types (Tap To Change)</span></div><div class="chips">${Array.from({ length: it.sets }, (_, u) => {
+        const m = modes[u] || 'Bodyweight';
+        return `<button class="chip ${m !== 'Bodyweight' ? 'on' : ''}" data-action="setup-mode" data-u="${u}" ${at}>${u + 1}: ${short[m]}</button>`;
+      }).join('')}</div>`;
+      h += `<label class="setup-row"><span>Band Colour</span><input data-setup="band" ${at} value="${esc(it.band || 'Purple')}" autocapitalize="words"></label>`;
+    }
+    const link =
+      it.names.length > 1
+        ? S.settings.supersets
+          ? `<button class="btn small ghost" data-action="lib-link" ${at}>${ICON.link}Unlink Superset</button>`
+          : ''
+        : S.settings.supersets && idx < S.library.days[d].length - 1
+          ? `<button class="btn small ghost" data-action="lib-link" ${at}>${ICON.link}Superset With Next</button>`
+          : '';
+    h += `<div class="row-btns">
+      <button class="btn small" data-action="lib-move" ${at} data-delta="-1">↑ Move Up</button>
+      <button class="btn small" data-action="lib-move" ${at} data-delta="1">↓ Move Down</button>
+      ${link}
+      <button class="btn small ghost danger" data-action="lib-remove" ${at}>Remove</button>
+    </div></div>`;
+    return h;
+  }
   function settingsView() {
-    const restOpts = [60, 90, 120, 150, 180, 240, 300]
-      .map((v) => `<option value="${v}" ${S.settings.restSec === v ? 'selected' : ''}>${clock(v)}</option>`)
-      .join('');
-    const dayLists = DAYS.map((d) => {
+    const opts = (vals, cur) => vals.map((v) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${clock(v)}</option>`).join('');
+    const sounds = SOUNDS.map(
+      ([v, t]) => `<div class="sound-row"><label class="check"><input type="radio" name="sound" data-setting-radio="sound" value="${v}" ${S.settings.sound === v ? 'checked' : ''}> ${t}</label>
+        ${v === 'off' ? '' : `<button class="btn small" data-action="play" data-sound="${v}">Test</button>`}</div>`
+    ).join('');
+    const days = DAYS.map((d) => {
       const list = S.library.days[d];
       const total = list.reduce((a, it) => a + it.sets * it.names.length, 0);
       const items = list
         .map((it, i) => {
-          const label = it.names.join(' + ');
-          const unit = it.names.length > 1 ? 'rounds' : 'sets';
-          const at = `data-day="${d}" data-idx="${i}"`;
-          const link =
-            it.names.length > 1
-              ? `<button class="link lib-link" data-action="lib-link" ${at}>Unlink superset</button>`
-              : i < list.length - 1
-                ? `<button class="link lib-link" data-action="lib-link" ${at}>Superset with next</button>`
-                : '';
-          return `<li><span class="lib-name">${it.names.length > 1 ? '<span class="tag">Superset</span> ' : ''}${esc(label)}${link}</span>
-            <span class="stepper"><button class="icon-btn" data-action="lib-sets" ${at} data-delta="-1" aria-label="Fewer ${unit}">−</button><b title="${unit}">${it.sets}</b><button class="icon-btn" data-action="lib-sets" ${at} data-delta="1" aria-label="More ${unit}">+</button></span>
-            <button class="icon-btn" data-action="lib-move" ${at} data-delta="-1" aria-label="Move ${esc(label)} up">↑</button>
-            <button class="icon-btn" data-action="lib-move" ${at} data-delta="1" aria-label="Move ${esc(label)} down">↓</button>
-            <button class="icon-btn" data-action="lib-remove" ${at} aria-label="Remove ${esc(label)} from ${d}">✕</button></li>`;
+          const key = `${d}|${i}`;
+          const open = S.setupOpen === key;
+          return `<li class="setup-item${open ? ' open' : ''}">
+            <button class="setup-head" data-action="setup-toggle" data-key="${key}" aria-expanded="${open}">
+              <span class="setup-name">${it.names.length > 1 ? '<span class="tag">Superset</span> ' : ''}${esc(it.names.join(' + '))}</span>
+              <span class="muted small">${esc(setupSummary(it))}</span>
+            </button>
+            ${open ? setupEditor(d, i) : ''}
+          </li>`;
         })
         .join('');
-      return `<h3>${d} · ${total} sets</h3><ul class="lib-list">${items}</ul>
-        <select data-addday="${d}" aria-label="Add an exercise to ${d}"><option value="">Add to ${d}…</option>${allExerciseNames()
+      return `<h3>${d} · ${total} Sets</h3><ul class="setup-list">${items}</ul>
+        <select data-addday="${d}" aria-label="Add an exercise to ${d}"><option value="">Add Exercise To ${d}…</option>${allExerciseNames()
           .map((n) => `<option>${esc(n)}</option>`)
           .join('')}</select>`;
     }).join('');
     return `<header class="top"><h1>Settings</h1></header>
       <section class="panel">
-        <h2>Your sheet</h2>
+        <h2>Your Sheet</h2>
         <div class="syncline">${syncText()}</div>
         <div class="row-btns">
-          <button class="btn small" data-action="sync-now">Sync now</button>
+          <button class="btn small" data-action="sync-now">Sync Now</button>
           <a class="btn small ghost" href="${esc(CFG.sheetUrl)}" target="_blank" rel="noopener">Open Training Log</a>
-          <button class="btn small ghost" data-action="forget-pass">Change passphrase</button>
+          <button class="btn small ghost" data-action="forget-pass">Change Passphrase</button>
         </div>
       </section>
       <section class="panel">
-        <h2>Rest timer</h2>
-        <label class="field">Default rest target<select data-setting="restSec">${restOpts}</select></label>
-        <label class="field">Rest after a warm-up set<select data-setting="warmRest">${[30, 45, 60, 90, 120]
-          .map((v) => `<option value="${v}" ${S.settings.warmRest === v ? 'selected' : ''}>${clock(v)}</option>`)
-          .join('')}</select></label>
-        <p class="muted small">Any exercise can have its own rest target: open it in the Exercises tab.</p>
-        <label class="check"><input type="checkbox" data-setting="sound" ${S.settings.sound ? 'checked' : ''}> Beep when the target is reached</label>
-        <label class="check"><input type="checkbox" data-setting="keepAwake" ${S.settings.keepAwake ? 'checked' : ''}> Keep the screen on during a workout</label>
-        <p class="muted small">Your phone can't beep while it's locked or showing another app, so keeping the screen on is what makes the beep work. Your actual rest is always recorded, from the end of one set to the start of the next.</p>
-        <button class="btn small" data-action="test-sound">Test the beep</button>
+        <h2>Timer And Sound</h2>
+        <label class="field">Default Rest<select data-setting="restSec">${opts([60, 90, 120, 150, 180, 240, 300], S.settings.restSec)}</select></label>
+        <label class="field">Rest After A Warm-Up Set<select data-setting="warmRest">${opts([30, 45, 60, 90, 120], S.settings.warmRest)}</select></label>
+        <h3>Rest Over Sound</h3>
+        ${sounds}
+        <p class="muted small">The sound is set to briefly lower your music while it plays. Test it with music on: if your music stops instead, tell me and I'll change how it plays. Your phone can't make the sound while it's locked, so the screen stays on during workouts.</p>
+        <label class="check"><input type="checkbox" data-setting="keepAwake" ${S.settings.keepAwake ? 'checked' : ''}> Keep The Screen On During A Workout</label>
       </section>
       <section class="panel">
-        <h2>Your split</h2>
-        <p class="muted small">The order here is the order exercises load in, and the number is how many sets (rounds for a superset). Changes stay on this device.</p>
-        ${dayLists}
+        <h2>Supersets</h2>
+        <label class="check"><input type="checkbox" data-setting="supersets" ${S.settings.supersets ? 'checked' : ''}> Show Superset Options</label>
+        <p class="muted small">When on, each exercise gets a “Superset With…” button, and Workout Setup can link exercises. Pull-Up + Chin-Up stays a superset either way.</p>
       </section>
       <section class="panel">
-        <h2>New exercise</h2>
-        <label class="field">Name<input id="new-name" placeholder="Cable Fly" autocomplete="off"></label>
-        <label class="check"><input type="checkbox" id="new-onearm"> One arm (log left and right reps)</label>
-        <label class="check"><input type="checkbox" id="new-bw"> Bodyweight (BW, +kg or band)</label>
-        <label class="check"><input type="checkbox" id="new-drop"> Drop set on the last set every time</label>
-        <label class="field">Types or attachments (optional, separated by commas)<input id="new-var" placeholder="Rope, Straight bar" autocomplete="off"></label>
-        <label class="field">Add to day<select id="new-day"><option value="">No day</option>${DAYS.map((d) => `<option>${d}</option>`).join('')}</select></label>
+        <h2>Workout Setup</h2>
+        <p class="muted small">Tap an exercise to set its sets, warm-ups, rest, set style and default types. Changes stay on this device.</p>
+        ${days}
+      </section>
+      <section class="panel">
+        <h2>New Exercise</h2>
+        <label class="field">Name<input id="new-name" placeholder="Cable Fly" autocomplete="off" autocapitalize="words"></label>
+        <label class="check"><input type="checkbox" id="new-onearm"> One Side At A Time</label>
+        <label class="check"><input type="checkbox" id="new-bw"> Bodyweight (BW, +Kg Or Band)</label>
+        <label class="field">Types Or Attachments (Optional, Separated By Commas)<input id="new-var" placeholder="Rope, Straight Bar" autocomplete="off" autocapitalize="words"></label>
+        <label class="field">Add To Day<select id="new-day"><option value="">No Day</option>${DAYS.map((d) => `<option>${d}</option>`).join('')}</select></label>
         <p id="new-err" class="err-text" role="alert"></p>
-        <button class="btn primary" data-action="lib-new">Add exercise</button>
+        <button class="btn primary" data-action="lib-new">Add Exercise</button>
       </section>
       <p class="muted small center">Training Tracker ${VERSION}</p>`;
   }
@@ -1865,7 +2046,6 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
   }
-
   function armed(el, label) {
     if (el.dataset.armed) return true;
     el.dataset.armed = '1';
@@ -1881,8 +2061,8 @@
     }, 3000);
     return false;
   }
-
   const blockById = (id) => S.current && S.current.blocks.find((b) => b.id === id);
+  const setupItem = (el) => S.library.days[el.dataset.day][+el.dataset.idx];
 
   async function connect(btn) {
     const pass = ($('#pass').value || '').trim();
@@ -1899,138 +2079,44 @@
       saveSettings();
       S.sync = 'idle';
       render();
-      toast('Connected to your sheet');
+      toast('Connected To Your Sheet');
       refreshHistory(true);
     } catch (e) {
       err.textContent =
-        e.code === 'wrong_passphrase'
-          ? "That passphrase doesn't match the one in your sheet. Try again."
-          : "Couldn't reach your sheet. Check your connection and try again.";
+        e.code === 'wrong_passphrase' ? "That passphrase doesn't match the one in your sheet. Try again." : "Couldn't reach your sheet. Check your connection and try again.";
       btn.disabled = false;
       btn.textContent = 'Connect';
     }
   }
 
-  const ACTIONS = {
-    'add-warm'(el) {
-      const b = blockById(el.dataset.block);
-      const c = S.current;
-      b.keys.forEach((k) => {
-        const it = c.items[k];
-        const s = newSet(k, 0);
-        s.warm = true;
-        s.drops = [];
-        if (itemDef(k).bodyweight) s.mode = 'Bodyweight';
-        it.sets.splice(warmCount(it), 0, s);
-      });
-      c.open = b.id;
-      persist();
-      render();
-    },
-    'warm-remove'(el) {
-      const k = el.dataset.k;
-      const it = S.current.items[k];
-      const [s] = it.sets.splice(+el.dataset.i, 1);
-      if (s && s.end) unqueueRows(rowIds(k, s));
-      requeueNames([it.name]);
-      queueSession();
-      persist();
-      render();
-      scheduleSync();
-    },
-    pair(el) {
-      S.pairing = el.dataset.block;
-      render();
-    },
-    'pair-cancel'() {
-      S.pairing = null;
-      render();
-    },
-    'pair-with'(el) {
-      const c = S.current;
-      const src = blockById(S.pairing);
-      const other = blockById(el.dataset.block);
-      S.pairing = null;
-      if (!src || !other || src === other) return render();
-      src.keys = src.keys.concat(other.keys);
-      c.blocks = c.blocks.filter((b) => b !== other);
-      c.open = src.id;
-      toast(`Superset: ${blockNames(src).join(' + ')}`);
-      afterReorder();
-    },
-    unlink(el) {
-      const c = S.current;
-      const b = blockById(el.dataset.block);
-      const idx = c.blocks.indexOf(b);
-      const parts = b.keys.map((k, n) => ({ id: n === 0 ? b.id : uid(), keys: [k] }));
-      c.blocks.splice(idx, 1, ...parts);
-      toast('Superset split into separate exercises');
-      afterReorder();
-    },
-    'lib-link'(el) {
-      const list = S.library.days[el.dataset.day];
-      const i = +el.dataset.idx;
-      const it = list[i];
-      if (it.names.length > 1) {
-        // Unlinking gives each exercise back the set count it had before it was linked.
-        const before = it.before || {};
-        list.splice(i, 1, ...it.names.map((n) => ({ names: [n], sets: before[n] || it.sets })));
-        toast('Superset split');
-      } else if (list[i + 1]) {
-        const next = list[i + 1];
-        const before = {};
-        [it, next].forEach((x) => x.names.forEach((n) => (before[n] = (x.before && x.before[n]) || x.sets)));
-        list.splice(i, 2, { names: it.names.concat(next.names), sets: Math.max(it.sets, next.sets), before });
-        toast(`Superset: ${it.names.concat(next.names).join(' + ')}`);
+  /** Switching between double and single (one side at a time) rebuilds unstarted sets. */
+  function changeChoice(k, label, value) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const before = oneArm(k);
+    const next = Object.assign({}, it.choices, { [label]: value });
+    if (oneArmFor(def, next) !== before) {
+      if (it.sets.some((s) => s.start || s.end)) {
+        toast('Undo Or Finish This Exercise’s Sets Before Switching Sides');
+        render();
+        return;
       }
-      saveLibrary();
-      render();
-    },
-    reorder() {
-      S.reorder = true;
-      render();
-      window.scrollTo(0, 0);
-    },
-    'reorder-done'() {
-      S.reorder = false;
-      render();
-      const card = S.current.open && document.getElementById('b-' + S.current.open);
-      if (card) card.scrollIntoView({ block: 'center' });
-    },
-    'ro-move'(el) {
-      const blocks = S.current.blocks;
-      const i = +el.dataset.idx;
-      const j = i + +el.dataset.delta;
-      if (j < 0 || j >= blocks.length) return;
-      [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
-      afterReorder();
-    },
-    'ro-next'(el) {
-      const c = S.current;
-      const [b] = c.blocks.splice(+el.dataset.idx, 1);
-      const worked = lastWorkedIndex(c.blocks);
-      c.blocks.splice(worked + 1, 0, b);
-      c.open = b.id;
-      afterReorder();
-      toast(`${blockNames(b).join(' + ')} is up next`);
-    },
-    'ro-save'() {
-      const c = S.current;
-      const list = S.library.days[c.day];
-      // Reorders the exercises in your split to match today; ones added only today aren't added,
-      // and ones you skipped today keep their place at the end.
-      const used = new Set();
-      const pos = list.map((it, idx) => {
-        const key = it.names.join('+');
-        const at = c.blocks.findIndex((b, bi) => !used.has(bi) && blockNames(b).join('+') === key);
-        if (at >= 0) used.add(at);
-        return { it, idx, at: at >= 0 ? at : Infinity };
-      });
-      pos.sort((a, b) => a.at - b.at || a.idx - b.idx);
-      S.library.days[c.day] = pos.map((p) => p.it);
-      saveLibrary();
-      toast(`Saved as your usual ${c.day} order`);
-    },
+      const units = unitsOf(k);
+      const warm = Math.ceil(warmRows(it) / sidesOf(k).length);
+      it.choices = next;
+      buildSets(k, units, warm);
+    } else {
+      const doneIdx = it.sets.map((s, i) => (s.end ? i : -1)).filter((i) => i >= 0);
+      it.choices = next;
+      doneIdx.forEach((i) => syncSetRows(k, i));
+    }
+    persist();
+    invalidate();
+    render();
+    scheduleSync();
+  }
+
+  const ACTIONS = {
     tab(el) {
       S.tab = el.dataset.tab;
       S.editingNote = null;
@@ -2068,41 +2154,78 @@
       const run = runningSet();
       if (run) endSet(run.k, run.i);
     },
+    'add-warm'(el) {
+      const b = blockById(el.dataset.block);
+      b.keys.forEach((k) => {
+        const it = S.current.items[k];
+        const at = warmRows(it);
+        sidesOf(k).forEach((side, n) => it.sets.splice(at + n, 0, newSet(k, { warm: true, side })));
+      });
+      S.current.open = b.id;
+      persist();
+      render();
+    },
+    'warm-remove'(el) {
+      const k = el.dataset.k;
+      const it = S.current.items[k];
+      const i = +el.dataset.i;
+      const size = sidesOf(k).length;
+      const u = unitIndex(k, i);
+      const idxs = it.sets.map((s, j) => (s.warm && Math.floor(countBefore(k, j, true) / size) === u ? j : -1)).filter((j) => j >= 0);
+      idxs.reverse().forEach((j) => {
+        const [s] = it.sets.splice(j, 1);
+        if (s.end) unqueueRows(rowIds(k, s));
+      });
+      requeueNames([it.name]);
+      queueSession();
+      persist();
+      render();
+      scheduleSync();
+    },
     'add-set'(el) {
       const b = blockById(el.dataset.block);
-      const c = S.current;
-      const target = Math.max(...b.keys.map((k) => workCount(c.items[k]))) + 1;
+      const target = Math.max(...b.keys.map((k) => unitsOf(k))) + 1;
       b.keys.forEach((k) => {
-        const sets = c.items[k].sets;
-        const before = sets.length;
-        while (workCount(c.items[k]) < target) sets.push(newSet(k, sets.length));
-        // The drop set belongs on the last set: move empty drop rows down to the new one.
-        const prev = sets[before - 1];
-        if (exDef(c.items[k].name).dropLast && prev && prev.drops.length && dropUntouched(prev)) {
-          sets[sets.length - 1].drops = prev.drops;
-          prev.drops = [];
+        const it = S.current.items[k];
+        while (unitsOf(k) < target) {
+          const u = unitsOf(k);
+          sidesOf(k).forEach((side) => it.sets.push(newSet(k, { side, unit: u })));
         }
+        if (it.cfg.style === 'dropLast') {
+          // The drop set belongs on the last set: move empty drop rows down.
+          const prev = unitRows(k, target - 2);
+          const last = unitRows(k, target - 1);
+          prev.forEach((pi, n) => {
+            const p = it.sets[pi];
+            if (p.drops.length && dropUntouched(p) && last[n] != null) {
+              it.sets[last[n]].drops = p.drops;
+              p.drops = [];
+            }
+          });
+        }
+        applyStyle(k);
       });
-      requeueNames(b.keys.map((k) => c.items[k].name));
+      requeueNames(b.keys.map((k) => S.current.items[k].name));
       persist();
       render();
       scheduleSync();
     },
     'remove-set'(el) {
       const b = blockById(el.dataset.block);
-      const c = S.current;
-      const max = Math.max(...b.keys.map((k) => workCount(c.items[k])));
+      const max = Math.max(...b.keys.map((k) => unitsOf(k)));
       if (!max) return;
       b.keys.forEach((k) => {
-        const it = c.items[k];
-        if (workCount(it) === max) {
-          const [s] = it.sets.splice(workAt(k, max - 1), 1);
-          if (s.end) unqueueRows(rowIds(k, s));
-          const li = workAt(k, workCount(it) - 1);
-          if (li >= 0 && dropUntouched(it.sets[li])) addDefaultDrops(k);
-        }
+        const it = S.current.items[k];
+        if (unitsOf(k) !== max) return;
+        unitRows(k, max - 1)
+          .reverse()
+          .forEach((i) => {
+            const [s] = it.sets.splice(i, 1);
+            if (s.end) unqueueRows(rowIds(k, s));
+          });
+        applyStyle(k);
       });
-      requeueNames(b.keys.map((k) => c.items[k].name));
+      requeueNames(b.keys.map((k) => S.current.items[k].name));
       queueSession();
       persist();
       render();
@@ -2112,8 +2235,8 @@
       const b = blockById(el.dataset.block);
       const c = S.current;
       const hasDone = b.keys.some((k) => c.items[k].sets.some((s) => s.start || s.end));
-      if (hasDone && !armed(el, 'Tap again to remove')) return;
-      const names = b.keys.map((k) => c.items[k].name);
+      if (hasDone && !armed(el, 'Tap Again To Remove')) return;
+      const names = blockNames(b);
       b.keys.forEach((k) => {
         c.items[k].sets.forEach((s) => s.end && unqueueRows(rowIds(k, s)));
         delete c.items[k];
@@ -2141,11 +2264,81 @@
       const i = +el.dataset.i;
       const s = S.current.items[k].sets[i];
       const [d] = s.drops.splice(+el.dataset.d, 1);
-      if (d) unqueueRows(sideIds(k, dropBase(s, d)));
+      if (d) unqueueRows([dropBase(s, d)]);
       if (s.end) syncSetRows(k, i);
       persist();
       render();
       scheduleSync();
+    },
+    pair(el) {
+      S.pairing = el.dataset.block;
+      render();
+    },
+    'pair-cancel'() {
+      S.pairing = null;
+      render();
+    },
+    'pair-with'(el) {
+      const c = S.current;
+      const src = blockById(S.pairing);
+      const other = blockById(el.dataset.block);
+      S.pairing = null;
+      if (!src || !other || src === other) return render();
+      src.keys = src.keys.concat(other.keys);
+      c.blocks = c.blocks.filter((b) => b !== other);
+      c.open = src.id;
+      toast(`Superset: ${blockNames(src).join(' + ')}`);
+      afterReorder();
+    },
+    unlink(el) {
+      const c = S.current;
+      const b = blockById(el.dataset.block);
+      const idx = c.blocks.indexOf(b);
+      c.blocks.splice(idx, 1, ...b.keys.map((k, n) => ({ id: n === 0 ? b.id : uid(), keys: [k] })));
+      toast('Superset Split');
+      afterReorder();
+    },
+    reorder() {
+      S.reorder = true;
+      render();
+      window.scrollTo(0, 0);
+    },
+    'reorder-done'() {
+      S.reorder = false;
+      render();
+      const card = S.current.open && document.getElementById('b-' + S.current.open);
+      if (card) card.scrollIntoView({ block: 'center' });
+    },
+    'ro-move'(el) {
+      const blocks = S.current.blocks;
+      const i = +el.dataset.idx;
+      const j = i + +el.dataset.delta;
+      if (j < 0 || j >= blocks.length) return;
+      [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+      afterReorder();
+    },
+    'ro-next'(el) {
+      const c = S.current;
+      const [b] = c.blocks.splice(+el.dataset.idx, 1);
+      c.blocks.splice(lastWorkedIndex(c.blocks) + 1, 0, b);
+      c.open = b.id;
+      afterReorder();
+      toast(`${blockNames(b).join(' + ')} Is Up Next`);
+    },
+    'ro-save'() {
+      const c = S.current;
+      const list = S.library.days[c.day];
+      const used = new Set();
+      const pos = list.map((it, idx) => {
+        const key = it.names.join('+');
+        const at = c.blocks.findIndex((b, bi) => !used.has(bi) && blockNames(b).join('+') === key);
+        if (at >= 0) used.add(at);
+        return { it, idx, at: at >= 0 ? at : Infinity };
+      });
+      pos.sort((a, b) => a.at - b.at || a.idx - b.idx);
+      S.library.days[c.day] = pos.map((p) => p.it);
+      saveLibrary();
+      toast(`Saved As Your Usual ${c.day} Order`);
     },
     'rest-add'() {
       const c = S.current;
@@ -2172,22 +2365,23 @@
       saveFinish();
     },
     discard(el) {
-      if (!armed(el, 'Tap again to discard all sets')) return;
+      if (!armed(el, 'Tap Again To Discard All Sets')) return;
       discardWorkout();
     },
     'add-ex'(el) {
-      const b = addBlock([el.dataset.name], null);
+      const name = el.dataset.name;
+      const b = addBlock([name], defaultCfg(name));
       persist();
       render();
       const card = document.getElementById('b-' + b.id);
       if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     },
     'create-ex'(el) {
-      const name = el.dataset.name.trim();
+      const name = tc(el.dataset.name.trim());
       if (!S.library.exercises.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
         S.library.exercises.push({ name });
         saveLibrary();
-        toast(`Created ${name}. You can make it one-arm or add types in Settings.`);
+        toast(`Created ${name}`);
       }
       ACTIONS['add-ex']({ dataset: { name } });
     },
@@ -2209,20 +2403,38 @@
       sync().then(() => refreshHistory(true));
     },
     'forget-pass'(el) {
-      if (!armed(el, 'Tap again to re-enter it')) return;
+      if (!armed(el, 'Tap Again To Re-Enter It')) return;
       S.settings.pass = '';
       saveSettings();
       render();
     },
-    'test-sound'() {
+    play(el) {
       unlockAudio();
-      const was = S.settings.sound;
-      S.settings.sound = true;
-      beep();
-      S.settings.sound = was;
+      playSound(el.dataset.sound);
     },
     pv(el) {
       S.page.variation = el.dataset.v;
+      render();
+    },
+    'setup-toggle'(el) {
+      S.setupOpen = S.setupOpen === el.dataset.key ? null : el.dataset.key;
+      render();
+    },
+    'setup-step'(el) {
+      const it = setupItem(el);
+      const f = el.dataset.field;
+      const min = f === 'sets' ? 1 : 0;
+      it[f] = Math.max(min, Math.min(f === 'sets' ? 20 : 4, (it[f] || 0) + +el.dataset.delta));
+      saveLibrary();
+      render();
+    },
+    'setup-mode'(el) {
+      const it = setupItem(el);
+      const order = ['Bodyweight', 'Band', 'Weighted'];
+      it.modes = Array.from({ length: it.sets }, (_, u) => (it.modes && it.modes[u]) || 'Bodyweight');
+      const u = +el.dataset.u;
+      it.modes[u] = order[(order.indexOf(it.modes[u]) + 1) % order.length];
+      saveLibrary();
       render();
     },
     'lib-move'(el) {
@@ -2231,22 +2443,38 @@
       const j = i + +el.dataset.delta;
       if (j < 0 || j >= list.length) return;
       [list[i], list[j]] = [list[j], list[i]];
-      saveLibrary();
-      render();
-    },
-    'lib-sets'(el) {
-      const it = S.library.days[el.dataset.day][+el.dataset.idx];
-      it.sets = Math.max(1, Math.min(20, it.sets + +el.dataset.delta));
+      S.setupOpen = `${el.dataset.day}|${j}`;
       saveLibrary();
       render();
     },
     'lib-remove'(el) {
+      if (!armed(el, 'Tap Again To Remove')) return;
       S.library.days[el.dataset.day].splice(+el.dataset.idx, 1);
+      S.setupOpen = null;
+      saveLibrary();
+      render();
+    },
+    'lib-link'(el) {
+      const list = S.library.days[el.dataset.day];
+      const i = +el.dataset.idx;
+      const it = list[i];
+      if (it.names.length > 1) {
+        const before = it.before || {};
+        list.splice(i, 1, ...it.names.map((n) => Object.assign(clone(it), { names: [n], sets: before[n] || it.sets, before: undefined })));
+        toast('Superset Split');
+      } else if (list[i + 1]) {
+        const next = list[i + 1];
+        const before = {};
+        [it, next].forEach((x) => x.names.forEach((n) => (before[n] = (x.before && x.before[n]) || x.sets)));
+        list.splice(i, 2, Object.assign(clone(it), { names: it.names.concat(next.names), sets: Math.max(it.sets, next.sets), before, choices: Object.assign({}, next.choices, it.choices) }));
+        toast(`Superset: ${it.names.concat(next.names).join(' + ')}`);
+      }
+      S.setupOpen = null;
       saveLibrary();
       render();
     },
     'lib-new'() {
-      const name = $('#new-name').value.trim();
+      const name = tc($('#new-name').value.trim());
       const err = $('#new-err');
       if (!name) {
         err.textContent = 'Enter a name.';
@@ -2259,15 +2487,11 @@
       const ex = { name };
       if ($('#new-onearm').checked) ex.oneArm = true;
       if ($('#new-bw').checked) ex.bodyweight = true;
-      if ($('#new-drop').checked && !ex.bodyweight) ex.dropLast = true;
       const vars = $('#new-var')
         .value.split(',')
-        .map((x) => x.trim())
+        .map((x) => tc(x.trim()))
         .filter(Boolean);
-      if (vars.length) {
-        ex.variations = vars.map((n) => ({ name: n }));
-        ex.label = 'Type';
-      }
+      if (vars.length) ex.options = [{ label: 'Type', choices: vars.map((n) => ({ name: n })) }];
       S.library.exercises.push(ex);
       const day = $('#new-day').value;
       if (day) S.library.days[day].push({ names: [name], sets: 3 });
@@ -2279,7 +2503,7 @@
 
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-action]');
-    if (!el) return;
+    if (!el || el.disabled) return;
     const fn = ACTIONS[el.dataset.action];
     if (fn) fn(el, e);
   });
@@ -2295,32 +2519,21 @@
       return;
     }
     const f = el.dataset.f;
-    if (!f || f === 'mode' || !S.current) return;
+    if (!f || f === 'mode' || !S.current || el.dataset.k == null) return;
     const k = el.dataset.k;
-    const i = +el.dataset.i;
     const it = S.current.items[k];
-    const s = it && it.sets[i];
+    const s = it && it.sets[+el.dataset.i];
     if (!s) return;
     if (el.dataset.d != null) {
-      const j = +el.dataset.d;
-      const d = s.drops[j];
+      const d = s.drops[+el.dataset.d];
       if (!d) return;
       d[f] = el.value;
-      // Typing a drop's reps with no weight entered takes the weight hint.
-      if (f !== 'kg' && el.value && d.kg === '') {
-        const ph = dropPlaceholder(k, i, j);
-        if (ph.kg != null) {
-          d.kg = fmt(ph.kg);
-          const kgEl = el.parentElement.querySelector('[data-f="kg"]');
-          if (kgEl) kgEl.value = d.kg;
-        }
-      }
     } else {
       s[f] = el.value;
     }
     if (el.value) el.classList.remove('need');
     persist();
-    if (s.end) requeueSoon(k, i);
+    if (s.end) requeueSoon(k, s.id);
   });
 
   document.addEventListener('change', (e) => {
@@ -2330,63 +2543,71 @@
       const i = +el.dataset.i;
       const s = S.current.items[k].sets[i];
       s.mode = el.value;
-      if (s.mode === 'Band' && !s.band) s.band = 'Purple';
+      if (s.mode === 'Band' && !s.band) s.band = S.current.items[k].cfg.band || 'Purple';
       persist();
       if (s.end) {
         syncSetRows(k, i);
         scheduleSync();
       }
       render();
-    } else if (el.dataset.var && S.current) {
-      const k = el.dataset.var;
-      const it = S.current.items[k];
+    } else if (el.dataset.f === 'kg' && el.dataset.d == null && S.current && el.dataset.k) {
+      // A new starting weight refreshes the ultimate drop set's ladder.
+      const k = el.dataset.k;
+      const i = +el.dataset.i;
+      if (S.current.items[k].cfg.style === 'ultimate') {
+        regenUltimate(k, i);
+        persist();
+        render();
+      }
+    } else if (el.dataset.choice && S.current) {
+      const k = el.dataset.k;
+      const label = el.dataset.choice;
       let v = el.value;
       if (v === '__other') {
-        v = (window.prompt('Name of the type or attachment') || '').trim();
-        if (!v) {
-          render();
-          return;
-        }
-        const def = exDef(it.name);
-        if (!varDef(def, v)) {
-          def.variations = (def.variations || []).concat({ name: v });
+        v = tc((window.prompt(`New ${label}`) || '').trim());
+        if (!v) return render();
+        const g = groupsOf(itemDef(k)).find((x) => x.label === label);
+        if (g && !g.choices.some((c) => c.name === v)) {
+          g.choices.push({ name: v });
           saveLibrary();
         }
       }
-      const doneIdx = it.sets.map((s, i) => (s.end ? i : -1)).filter((i) => i >= 0);
-      unqueueRows(doneIdx.reduce((a, i) => a.concat(rowIds(k, it.sets[i])), []));
-      it.variation = v;
-      doneIdx.forEach((i) => syncSetRows(k, i));
-      persist();
-      invalidate();
-      render();
-      scheduleSync();
+      changeChoice(k, label, v);
     } else if (el.dataset.setting) {
       const key = el.dataset.setting;
       S.settings[key] = el.type === 'checkbox' ? el.checked : +el.value;
       saveSettings();
       if (key === 'keepAwake') keepAwake(!!S.current);
+      if (key === 'supersets') render();
+    } else if (el.dataset.settingRadio) {
+      S.settings[el.dataset.settingRadio] = el.value;
+      saveSettings();
+      if (el.value !== 'off') {
+        unlockAudio();
+        playSound(el.value);
+      }
+    } else if (el.dataset.setup) {
+      const it = setupItem(el);
+      const f = el.dataset.setup;
+      if (f === 'rest') it.rest = el.value === '' ? undefined : +el.value;
+      else if (f === 'restBetween') it.restBetween = +el.value;
+      else if (f === 'style') it.style = el.value;
+      else if (f === 'step') it.step = +el.value;
+      else if (f === 'floors') it.floors = el.value.split(',').map((x) => num(x)).filter((x) => x != null && x > 0);
+      else if (f === 'band') it.band = tc(el.value.trim()) || 'Purple';
+      saveLibrary();
+      render();
+    } else if (el.dataset.setupChoice != null) {
+      const it = setupItem(el);
+      it.choices = it.choices || {};
+      it.choices[el.dataset.name] = Object.assign({}, it.choices[el.dataset.name], { [el.dataset.label]: el.value });
+      saveLibrary();
+      render();
     } else if (el.dataset.addday) {
       if (!el.value) return;
       S.library.days[el.dataset.addday].push({ names: [el.value], sets: 3 });
       saveLibrary();
       render();
-    } else if (el.dataset.exrest != null) {
-      const name = el.dataset.name;
-      let def = S.library.exercises.find((x) => x.name === name);
-      if (!def) S.library.exercises.push((def = { name }));
-      const v = +el.value;
-      if (v) def.rest = v;
-      else delete def.rest;
-      saveLibrary();
-      toast(`${name}: rest target ${v ? clock(v) : 'back to default'}`);
-    } else if (el.dataset.exflag) {
-      const name = el.dataset.name;
-      let def = S.library.exercises.find((x) => x.name === name);
-      if (!def) S.library.exercises.push((def = { name }));
-      def[el.dataset.exflag] = el.checked;
-      saveLibrary();
-      toast(el.checked ? `${name} will start with a drop set on its last set` : `${name} won't add a drop set by default`);
     } else if (el.dataset.page) {
       S.page = { name: el.value, variation: '' };
       S.editingNote = null;

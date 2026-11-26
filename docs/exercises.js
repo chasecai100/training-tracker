@@ -1,85 +1,127 @@
-// Starting exercise list and split. Changes made in the app's Settings are kept on each device.
+// Starting exercise list and Workout Setup. Changes made in the app's Settings are kept on each device.
 //
-// bodyweight: each set is bodyweight, weighted (+kg) or band.
-// oneArm: log left and right reps separately (same weight).
-// variations: choices shown in a picker on the exercise (label names the picker).
-//   A variation with oneArm: true switches that exercise to left/right reps.
-//   Each variation gets its own progress line.
-// dropLast: the last set always starts with drop-set rows.
+// Exercise flags:
+//   options: pickers shown on the exercise, e.g. { label: 'Grip', choices: ['Wide MAG Grip', ...] }.
+//            A choice with oneArm: true switches the exercise to one side at a time.
+//   oneArm: always done one side at a time (each side is its own timed set).
+//   bodyweight: each set is bodyweight, weighted (+kg) or band. partials: also log partial reps.
+//   kgLabel: what the weight box means (Landmine Press logs the added weight).
+//
+// Workout Setup items (one per card):
+//   names: one exercise, or two for a superset (sets are then rounds).
+//   sets, warmups: how many working sets and warm-up sets load.
+//   rest: seconds after a set (0 = no rest timer; leave out for the default).
+//   restBetween: superset only, seconds between the two exercises in a round.
+//   style: 'normal' | 'dropLast' (drop set on the last set) | 'double' (two weights every set)
+//          | 'ultimate' (drops of `step` kg down to floors[set], e.g. 5 kg then 2.5 kg).
+//   choices: default picker choices per exercise. modes/band: bodyweight set types per set.
 window.TT_DEFAULTS = {
-  version: 3,
+  version: 4,
   exercises: [
-    { name: 'Machine Press', label: 'Machine', variations: [{ name: 'Weight stack' }, { name: 'Plate-loaded' }] },
-    { name: 'Incline Bench' },
-    { name: 'Ab Raise' },
-    { name: 'Landmine Press' },
-    { name: 'Pec Deck' },
-    { name: 'Shoulder Press', label: 'Type', variations: [{ name: 'Smith' }, { name: 'Dumbbell' }] },
+    { name: 'Machine Press', options: [{ label: 'Machine', choices: ['Weight Stack', 'Plate Loaded'] }] },
+    { name: 'Incline Smith Bench' },
+    { name: 'Core Exercise', options: [{ label: 'Exercise', choices: ['Ab Raise', 'Ab Crunch', 'Pallof Press'] }] },
+    { name: 'Landmine Press', oneArm: true, kgLabel: '+Kg', options: [{ label: 'Band', choices: ['Red Band', 'No Band'] }] },
+    { name: 'Pec Deck Fly' },
+    { name: 'Shoulder Press', options: [{ label: 'Type', choices: ['Smith', 'Dumbbell'] }] },
     { name: 'Dumbbell Pullover' },
-    { name: 'Triceps', label: 'Type', variations: [{ name: 'Overhead extension' }], dropLast: true },
-    { name: 'Pull-up', bodyweight: true },
-    { name: 'Chin-up', bodyweight: true },
-    { name: 'Seated Row', label: 'Attachment', variations: [{ name: 'Close MAG grip' }, { name: 'Medium MAG grip' }] },
-    { name: 'Ab Crunch' },
+    {
+      name: 'Tricep Overhead Extension',
+      options: [
+        { label: 'Setup', choices: ['Single Rope', 'Double Cable'] },
+        { label: 'Attachment', choices: ['Rope', 'V-Bar'] },
+      ],
+    },
+    { name: 'Pull-Up', bodyweight: true, partials: true },
+    { name: 'Chin-Up', bodyweight: true, partials: true },
+    { name: 'Seated Row', options: [{ label: 'Grip', choices: ['Wide MAG Grip', 'Close MAG Grip', 'Medium MAG Grip', 'V Grip'] }] },
     { name: 'Supported Row' },
     {
       name: 'Lat Pulldown',
-      label: 'Attachment',
-      variations: [{ name: 'Close MAG grip' }, { name: 'Medium MAG grip' }, { name: 'Single arm', oneArm: true }],
+      options: [{ label: 'Grip', choices: [{ name: 'Single Hand', oneArm: true }, 'Close MAG Grip', 'Medium MAG Grip', 'V Grip'] }],
     },
-    { name: 'Reverse Fly', label: 'Type', variations: [{ name: 'Double' }, { name: 'Single arm', oneArm: true }] },
+    {
+      name: 'Reverse Fly',
+      options: [
+        { label: 'Equipment', choices: ['Machine', 'Cable'] },
+        { label: 'Arms', choices: ['Double', { name: 'Single', oneArm: true }] },
+      ],
+    },
     {
       name: 'Biceps',
-      label: 'Type',
-      variations: [{ name: 'Cable' }, { name: 'Supported single arm', oneArm: true }],
-      dropLast: true,
+      options: [
+        { label: 'Equipment', choices: ['Cable', 'Dumbbell', 'Bench Supported'] },
+        { label: 'Arms', choices: ['Double', { name: 'Single', oneArm: true }] },
+      ],
     },
     { name: 'Face Pull' },
     { name: 'Leg Press' },
-    { name: 'Calves' },
-    { name: 'Hamstring Curl' },
+    { name: 'Calves', options: [{ label: 'Machine', choices: ['Machine', 'Smith'] }] },
+    { name: 'Hamstring Curl', options: [{ label: 'Position', choices: ['Lying', 'Seated'] }] },
     { name: 'Leg Extension' },
     { name: 'Adductor' },
-    { name: 'Lateral Raise' },
+    { name: 'Lateral Raise', options: [{ label: 'Equipment', choices: ['Dumbbell', 'Cable'] }] },
   ],
-  // Usual order and number of sets for each day. names with two entries is a
-  // superset, and its sets are rounds (one set of each per round).
   days: {
     Push: [
-      { names: ['Machine Press'], sets: 5 },
-      { names: ['Incline Bench'], sets: 5 },
-      { names: ['Ab Raise'], sets: 2 },
-      { names: ['Landmine Press'], sets: 3 },
-      { names: ['Pec Deck'], sets: 5 },
-      { names: ['Shoulder Press'], sets: 8 },
-      { names: ['Dumbbell Pullover'], sets: 3 },
-      { names: ['Triceps'], sets: 2 },
+      { names: ['Machine Press'], sets: 5, warmups: 1, rest: 120, choices: { 'Machine Press': { Machine: 'Weight Stack' } } },
+      { names: ['Incline Smith Bench'], sets: 5, warmups: 1, rest: 120 },
+      { names: ['Core Exercise'], sets: 3, rest: 90, choices: { 'Core Exercise': { Exercise: 'Ab Raise' } } },
+      { names: ['Landmine Press'], sets: 3, rest: 60, choices: { 'Landmine Press': { Band: 'Red Band' } } },
+      { names: ['Pec Deck Fly'], sets: 5, warmups: 1, rest: 120 },
+      { names: ['Shoulder Press'], sets: 8, rest: 90 },
+      { names: ['Dumbbell Pullover'], sets: 5, rest: 90 },
+      {
+        names: ['Tricep Overhead Extension'],
+        sets: 2,
+        rest: 120,
+        style: 'ultimate',
+        step: 2.5,
+        floors: [5, 2.5],
+        choices: { 'Tricep Overhead Extension': { Setup: 'Single Rope', Attachment: 'Rope' } },
+      },
     ],
     Pull: [
-      { names: ['Pull-up', 'Chin-up'], sets: 5 },
-      { names: ['Seated Row'], sets: 5 },
-      { names: ['Ab Crunch'], sets: 2 },
-      { names: ['Supported Row'], sets: 5 },
-      { names: ['Lat Pulldown'], sets: 5 },
-      { names: ['Reverse Fly'], sets: 5 },
-      { names: ['Biceps'], sets: 3 },
+      {
+        names: ['Pull-Up', 'Chin-Up'],
+        sets: 5,
+        rest: 120,
+        restBetween: 60,
+        modes: ['Bodyweight', 'Bodyweight', 'Band', 'Band', 'Band'],
+        band: 'Purple',
+      },
+      { names: ['Seated Row'], sets: 5, rest: 120, choices: { 'Seated Row': { Grip: 'Wide MAG Grip' } } },
+      { names: ['Core Exercise'], sets: 3, rest: 90, choices: { 'Core Exercise': { Exercise: 'Ab Crunch' } } },
+      { names: ['Supported Row'], sets: 5, rest: 120 },
+      { names: ['Lat Pulldown'], sets: 5, rest: 0, choices: { 'Lat Pulldown': { Grip: 'Single Hand' } } },
+      { names: ['Reverse Fly'], sets: 5, rest: 120, style: 'double', choices: { 'Reverse Fly': { Equipment: 'Machine', Arms: 'Double' } } },
+      {
+        names: ['Biceps'],
+        sets: 2,
+        rest: 120,
+        style: 'ultimate',
+        step: 2.5,
+        floors: [5, 2.5],
+        choices: { Biceps: { Equipment: 'Cable', Arms: 'Double' } },
+      },
+      { names: ['Biceps'], sets: 5, rest: 60, style: 'double', choices: { Biceps: { Equipment: 'Bench Supported', Arms: 'Single' } } },
       { names: ['Face Pull'], sets: 5 },
     ],
     Legs: [
-      { names: ['Leg Press'], sets: 5 },
-      { names: ['Calves'], sets: 5 },
-      { names: ['Hamstring Curl'], sets: 5 },
-      { names: ['Leg Extension'], sets: 5 },
-      { names: ['Adductor'], sets: 5 },
-      { names: ['Calves'], sets: 5 },
+      { names: ['Leg Press'], sets: 5, warmups: 2, rest: 180 },
+      { names: ['Calves'], sets: 5, rest: 90, choices: { Calves: { Machine: 'Machine' } } },
+      { names: ['Hamstring Curl'], sets: 5, rest: 120, choices: { 'Hamstring Curl': { Position: 'Lying' } } },
+      { names: ['Leg Extension'], sets: 5, rest: 120 },
+      { names: ['Adductor'], sets: 5, rest: 90 },
+      { names: ['Calves'], sets: 5, rest: 90, choices: { Calves: { Machine: 'Machine' } } },
     ],
     Shoulders: [
-      { names: ['Shoulder Press'], sets: 5 },
-      { names: ['Reverse Fly'], sets: 5 },
-      { names: ['Lateral Raise'], sets: 5 },
-      { names: ['Landmine Press'], sets: 3 },
-      { names: ['Face Pull'], sets: 4 },
-      { names: ['Supported Row'], sets: 3 },
+      { names: ['Shoulder Press'], sets: 5, rest: 120, style: 'double' },
+      { names: ['Reverse Fly'], sets: 5, rest: 120, style: 'double', choices: { 'Reverse Fly': { Equipment: 'Machine', Arms: 'Double' } } },
+      { names: ['Lateral Raise'], sets: 5, rest: 120, style: 'double', choices: { 'Lateral Raise': { Equipment: 'Dumbbell' } } },
+      { names: ['Landmine Press'], sets: 3, rest: 60, choices: { 'Landmine Press': { Band: 'Red Band' } } },
+      { names: ['Face Pull'], sets: 4, rest: 120 },
+      { names: ['Supported Row'], sets: 3, rest: 120 },
     ],
   },
 };
