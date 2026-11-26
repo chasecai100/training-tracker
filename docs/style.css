@@ -132,6 +132,7 @@ input[type="checkbox"] { width: 22px; height: 22px; padding: 0; accent-color: va
 .tb-total span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .tb-total b { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .topbar .btn { justify-self: end; }
+.tb-total .tb-since { font-size: 11px; letter-spacing: 0; text-transform: none; margin-top: 2px; }
 .st-big { font-size: 38px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; flex-basis: 100%; }
 .status.idle { justify-content: center; text-align: center; }
 

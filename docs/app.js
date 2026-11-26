@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.1.2';
+  const VERSION = '3.2.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -79,6 +79,14 @@
     const m = Math.floor((sec % 3600) / 60);
     const s = sec % 60;
     return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  };
+  /** e.g. "Pacific/Auckland (UTC+13:00)": the phone's time zone at that moment. */
+  const timeZoneLabel = (d) => {
+    const off = -d.getTimezoneOffset();
+    const sign = off >= 0 ? '+' : '-';
+    const name = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').trim();
+    const utc = `UTC${sign}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+    return name ? `${name} (${utc})` : utc;
   };
   const parseDay = (str) => new Date(str + 'T00:00:00');
   const daysAgo = (str) => {
@@ -838,12 +846,16 @@
       dropSession(c.session);
       return;
     }
+    // All times are your phone's local time; the time zone is stored alongside.
+    const secs = Math.max(0, Math.round((st.last - st.first) / 1000));
     S.pending.sessions[c.session] = {
       Session: c.session,
       Date: ymd(st.first),
       Day: c.day,
-      Start: hm(st.first),
-      End: hm(st.last),
+      Start: hms(st.first),
+      End: hms(st.last),
+      Duration: `${Math.floor(secs / 3600)}:${pad(Math.floor((secs % 3600) / 60))}:${pad(secs % 60)}`,
+      'Time Zone': timeZoneLabel(st.first),
       'Length (min)': Math.max(1, Math.round((st.last - st.first) / 60000)),
       Sets: st.sets,
       'Work (min)': Math.round(st.work / 6) / 10,
@@ -1344,8 +1356,12 @@
     });
     const info = {};
     S.history.sessions.concat(Object.values(S.pending.sessions)).forEach((r) => (info[r.Session] = r));
+    const hhmm = (v) => (v ? String(v).slice(0, 5) : '');
     return [...by.values()]
-      .map((s) => Object.assign(s, { length: info[s.session] ? num(info[s.session]['Length (min)']) : null }))
+      .map((s) => {
+        const r = info[s.session];
+        return Object.assign(s, { length: r ? num(r['Length (min)']) : null, from: r ? hhmm(r.Start) : '', to: r ? hhmm(r.End) : '' });
+      })
       .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
   }
 
@@ -1368,7 +1384,7 @@
     }).join('');
     const recent = sessions.slice(0, 8).map(
       (s) => `<li><div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}</span></div>
-        ${s.length ? `<div class="muted small">${s.length} min</div>` : ''}</li>`
+        ${s.length || s.from ? `<div class="muted small">${[s.from && s.to ? `${s.from}–${s.to}` : s.from, s.length ? `${s.length} min` : ''].filter(Boolean).join(' · ')}</div>` : ''}</li>`
     ).join('');
     return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start A Workout</h1><div class="syncline">${syncText()}</div></div></div></header>
       <div class="day-grid">${days}</div>
@@ -1413,7 +1429,7 @@
     return `<div class="sticky">
         <div class="topbar">
           <div class="tb-left"><div class="tb-day">${esc(c.day)}</div><div class="tb-sets">${done}/${total} Sets</div></div>
-          <div class="tb-total"><span>Total</span><b id="wclock"></b></div>
+          <div class="tb-total"><span>Total</span><b id="wclock"></b><span class="tb-since">${c.firstStart ? 'Since ' + hm(new Date(c.firstStart)) : 'Not Started'}</span></div>
           <button class="btn primary" data-action="finish">Finish</button>
         </div>
         ${statusHtml()}

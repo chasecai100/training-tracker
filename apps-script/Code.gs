@@ -17,12 +17,12 @@ const SESSIONS = 'Sessions';
 const NOTES = 'Notes';
 const HEADERS = {
   Sets: ['Date', 'Time', 'Day', 'Exercise', 'Variation', 'Type', 'Set', 'Drop', 'Side', 'kg', 'Reps', 'Partials', 'Start', 'End', 'Set (s)', 'Rest (s)', 'Session', 'ID'],
-  Sessions: ['Session', 'Date', 'Day', 'Start', 'End', 'Length (min)', 'Sets', 'Work (min)', 'Rest (min)'],
+  Sessions: ['Session', 'Date', 'Day', 'Start', 'End', 'Duration', 'Length (min)', 'Sets', 'Work (min)', 'Rest (min)', 'Time Zone'],
   Notes: ['Exercise', 'Note', 'Updated'],
 };
 const FORMATS = {
   Sets: { Date: 'yyyy-mm-dd', Time: 'HH:mm', Start: 'HH:mm:ss', End: 'HH:mm:ss', Session: '@', ID: '@' },
-  Sessions: { Session: '@', Date: 'yyyy-mm-dd', Start: 'HH:mm', End: 'HH:mm' },
+  Sessions: { Session: '@', Date: 'yyyy-mm-dd', Start: 'HH:mm:ss', End: 'HH:mm:ss', Duration: '[h]:mm:ss', 'Time Zone': '@' },
   Notes: { Exercise: '@', Note: '@', Updated: 'yyyy-mm-dd HH:mm' },
 };
 

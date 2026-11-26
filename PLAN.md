@@ -100,7 +100,13 @@ A web app for your iPhone and PC.
 | Start, End, Set (s), Rest (s) | Clock times, set length, and the rest before the set |
 | Session, ID | Which workout, and the row's own ID |
 
-**Sessions tab:** Session, Date, Day, Start, End, Length (min), Sets, Work (min), Rest (min).
+**Sessions tab:** Session, Date, Day, Start, End, Duration, Length (min), Sets, Work (min), Rest (min), Time Zone.
+
+- All times are your phone's local time.
+- Start and End are stored to the second: the first set's Start and the last set's End.
+- Duration is the exact workout length (h:mm:ss).
+- Time Zone records where the phone was, e.g. "Australia/Sydney (UTC+11:00)", so times stay meaningful if you train while travelling.
+- In the app, the workout's top bar shows "Since 18:05" under the total time, and Recent Workouts show each workout's start–end times.
 
 **Notes tab:** Exercise, Note, Updated.
 
