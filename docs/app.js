@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.1.1';
+  const VERSION = '3.1.2';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -1358,18 +1358,17 @@
       if (s.length) (lens[s.day] = lens[s.day] || []).push(s.length);
     });
     const days = DAYS.map((d) => {
-      const n = (S.library.days[d] || []).reduce((a, it) => a + it.sets * it.names.length, 0);
       const l = lens[d];
       const avg = l ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null;
       return `<button class="day" data-action="start" data-day="${d}">
         <span class="day-name">${d}</span>
-        <span class="day-stat">${avg ? `Avg ${avg} Min` : `${n} Sets`}</span>
+        ${avg ? `<span class="day-stat">Avg ${avg} Min</span>` : ''}
         <span class="muted small">${lastByDay[d] ? 'Last ' + esc(daysAgo(lastByDay[d])) : 'Not done yet'}</span>
       </button>`;
     }).join('');
     const recent = sessions.slice(0, 8).map(
       (s) => `<li><div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}</span></div>
-        <div class="muted small">${s.sets} sets${s.length ? ` · ${s.length} min` : ''}</div></li>`
+        ${s.length ? `<div class="muted small">${s.length} min</div>` : ''}</li>`
     ).join('');
     return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start A Workout</h1><div class="syncline">${syncText()}</div></div></div></header>
       <div class="day-grid">${days}</div>
