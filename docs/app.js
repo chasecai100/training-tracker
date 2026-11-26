@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.3.0';
+  const VERSION = '3.4.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -984,6 +984,24 @@
     if (reps && !reps.value && !s.warm) reps.focus();
   }
 
+  /** A drop set is part of the set, not rest: reopen the set you just ended so its clock carries on. */
+  function isJustFinished(k, i) {
+    const s = S.current.items[k].sets[i];
+    return !!s.end && s.end === S.current.lastEnd && !runningSet();
+  }
+  function resumeIfJustFinished(k, i) {
+    if (!isJustFinished(k, i)) return;
+    const c = S.current;
+    c.items[k].sets[i].end = null;
+    let last = null;
+    forEachSet((kk, ii, x) => {
+      if (x.end && (!last || x.end > last)) last = x.end;
+    });
+    c.lastEnd = last;
+    c.restCountdown = false;
+    toast('Set Resumed For Your Drop · Tap End When Done');
+  }
+
   function undoSet(k, i) {
     const c = S.current;
     const s = c.items[k].sets[i];
@@ -1739,8 +1757,10 @@
     }
     if (s.warm) {
       if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ Remove Warm-Up</button>`;
-    } else if (canDrop(k) && it.cfg.style !== 'ultimate' && isActiveSet(k, i)) {
-      inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
+    } else if (canDrop(k)) {
+      const planned = s.drops.length && s.drops.every((d) => !d.reps) && (it.cfg.style === 'double' || it.cfg.style === 'ultimate');
+      if (planned && isJustFinished(k, i)) inner += `<button class="drop-add" data-action="resume-set" ${a}>↺ Continue Into Drop</button>`;
+      else if (it.cfg.style !== 'ultimate' && isActiveSet(k, i)) inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
     }
     if (it.cfg.style === 'ultimate' && !s.warm && !s.drops.length && !s.end) inner += '<span class="muted">Drops fill in once you enter the weight</span>';
     return `<div class="markers${label ? ' indent' : ''}" id="ft-${s.id}"${inner ? '' : ' hidden'}>${inner}</div>`;
@@ -2282,11 +2302,17 @@
       const k = el.dataset.k;
       const i = +el.dataset.i;
       const s = S.current.items[k].sets[i];
+      resumeIfJustFinished(k, i);
       s.drops.push(newDrop());
       persist();
       render();
       const inp = document.querySelector(`.drop-row [data-k="${k}"][data-i="${i}"][data-d="${s.drops.length - 1}"][data-f="kg"]`);
       if (inp) inp.focus();
+    },
+    'resume-set'(el) {
+      resumeIfJustFinished(el.dataset.k, +el.dataset.i);
+      persist();
+      render();
     },
     'drop-remove'(el) {
       const k = el.dataset.k;
