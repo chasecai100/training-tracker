@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
   // Exercise names from the first version's list, used once to tell them apart from ones you added.
   const V1_NAMES = [
@@ -105,6 +105,7 @@
     sync: 'idle',
     page: { name: null, variation: '' },
     editingNote: null,
+    reorder: false,
   };
 
   function normalizeEx(e) {
@@ -714,6 +715,7 @@
   function closeWorkout() {
     S.current = null;
     S.modal = null;
+    S.reorder = false;
     persist();
     invalidate();
     keepAwake(false);
@@ -1074,13 +1076,87 @@
         </header>
         ${statusHtml()}
       </div>
+      ${
+        S.reorder
+          ? reorderHtml()
+          : `<div class="list-tools"><button class="link" data-action="reorder">⇅ Reorder exercises</button></div>
       ${c.blocks.map(blockHtml).join('')}
       <div class="add-ex">
         <input id="exsearch" type="search" placeholder="Add any exercise, or create a new one" autocomplete="off" autocorrect="off" enterkeyhint="search" aria-label="Add an exercise">
         <div id="exresults" class="results"></div>
-      </div>
+      </div>`
+      }
       <p class="syncline center">${syncText()}</p>
       ${S.modal === 'finish' ? finishModal() : ''}`;
+  }
+
+  // ---------- Reordering during a workout ----------
+  const blockNames = (b) => b.keys.map((k) => S.current.items[k].name);
+  /** Index of the block you most recently started or finished a set in, or -1. */
+  function lastWorkedIndex(blocks) {
+    let best = -1;
+    let at = '';
+    blocks.forEach((b, idx) =>
+      b.keys.forEach((k) =>
+        S.current.items[k].sets.forEach((s) => {
+          const t = s.end || s.start || '';
+          if (t > at) {
+            at = t;
+            best = idx;
+          }
+        })
+      )
+    );
+    return best;
+  }
+  /** Set numbers carry on across an exercise that appears twice, so re-send those after a move. */
+  function afterReorder() {
+    const counts = {};
+    S.current.blocks.forEach((b) => blockNames(b).forEach((n) => (counts[n] = (counts[n] || 0) + 1)));
+    const dup = Object.keys(counts).filter((n) => counts[n] > 1);
+    if (dup.length) {
+      requeueNames(dup);
+      scheduleSync();
+    }
+    persist();
+    render();
+  }
+
+  function reorderHtml() {
+    const c = S.current;
+    const worked = lastWorkedIndex(c.blocks);
+    const rows = c.blocks
+      .map((b, idx) => {
+        let done = 0;
+        let total = 0;
+        b.keys.forEach((k) =>
+          c.items[k].sets.forEach((s) => {
+            total++;
+            if (s.end) done++;
+          })
+        );
+        const label = blockNames(b).join(' + ');
+        const at = `data-idx="${idx}"`;
+        const isNext = worked >= 0 ? idx === worked + 1 : idx === 0;
+        const nextBtn =
+          idx === worked
+            ? '<span class="ro-tag">Current</span>'
+            : isNext
+              ? '<span class="ro-tag">Next</span>'
+              : `<button class="btn small" data-action="ro-next" ${at} aria-label="Do ${esc(label)} next">Do next</button>`;
+        return `<li class="${total && done === total ? 'finished' : ''}">
+          <span class="ro-name">${esc(label)}<span class="muted small">${done}/${total}</span></span>
+          ${nextBtn}
+          <button class="icon-btn" data-action="ro-move" ${at} data-delta="-1" aria-label="Move ${esc(label)} up">↑</button>
+          <button class="icon-btn" data-action="ro-move" ${at} data-delta="1" aria-label="Move ${esc(label)} down">↓</button>
+        </li>`;
+      })
+      .join('');
+    const canSave = DAYS.includes(c.day);
+    return `<div class="reorder-head"><h2>Reorder exercises</h2><button class="btn small primary" data-action="reorder-done">Done</button></div>
+      <p class="muted small">“Do next” puts an exercise straight after the one you’re on.</p>
+      <ul class="reorder-list">${rows}</ul>
+      ${canSave ? `<button class="btn wide" data-action="ro-save">Save this order for every ${esc(c.day)} day</button>` : ''}`;
   }
 
   function lastLine(k, prefix) {
@@ -1544,9 +1620,55 @@
   }
 
   const ACTIONS = {
+    reorder() {
+      S.reorder = true;
+      render();
+      window.scrollTo(0, 0);
+    },
+    'reorder-done'() {
+      S.reorder = false;
+      render();
+      const card = S.current.open && document.getElementById('b-' + S.current.open);
+      if (card) card.scrollIntoView({ block: 'center' });
+    },
+    'ro-move'(el) {
+      const blocks = S.current.blocks;
+      const i = +el.dataset.idx;
+      const j = i + +el.dataset.delta;
+      if (j < 0 || j >= blocks.length) return;
+      [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+      afterReorder();
+    },
+    'ro-next'(el) {
+      const c = S.current;
+      const [b] = c.blocks.splice(+el.dataset.idx, 1);
+      const worked = lastWorkedIndex(c.blocks);
+      c.blocks.splice(worked + 1, 0, b);
+      c.open = b.id;
+      afterReorder();
+      toast(`${blockNames(b).join(' + ')} is up next`);
+    },
+    'ro-save'() {
+      const c = S.current;
+      const list = S.library.days[c.day];
+      // Reorders the exercises in your split to match today; ones added only today aren't added,
+      // and ones you skipped today keep their place at the end.
+      const used = new Set();
+      const pos = list.map((it, idx) => {
+        const key = it.names.join('+');
+        const at = c.blocks.findIndex((b, bi) => !used.has(bi) && blockNames(b).join('+') === key);
+        if (at >= 0) used.add(at);
+        return { it, idx, at: at >= 0 ? at : Infinity };
+      });
+      pos.sort((a, b) => a.at - b.at || a.idx - b.idx);
+      S.library.days[c.day] = pos.map((p) => p.it);
+      saveLibrary();
+      toast(`Saved as your usual ${c.day} order`);
+    },
     tab(el) {
       S.tab = el.dataset.tab;
       S.editingNote = null;
+      S.reorder = false;
       render();
       window.scrollTo(0, 0);
     },

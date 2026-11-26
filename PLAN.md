@@ -1,6 +1,6 @@
 # Training Tracker: plan
 
-_Last updated 26 Nov 2026 (version 2). App code is in `docs/`, the sheet script is in `apps-script/Code.gs`._
+_Last updated 26 Nov 2026 (version 2.2). App code is in `docs/`, the sheet script is in `apps-script/Code.gs`._
 
 ## What it is
 
@@ -24,6 +24,10 @@ A web app for your iPhone 16 Pro Max and your PC. On the iPhone you add it to th
    - Each set row has a Start button. While a set runs, the button becomes End and a red bar at the top shows the set timer. When you tap End, the reps box is ready for you to type into.
    - After End, the rest timer counts up toward your target (2:00 by default) and beeps when you reach it. If you go over, it turns red and shows by how much.
    - Each exercise shows its note (seat settings and so on), what you did last time, and an up/same/down marker on every set compared with last time.
+   - **Drop sets:** tap "+ drop" under a set to add a drop row, with its own kg and reps. Triceps and Biceps start with drop rows on their last set: as many as last time, or 3 the first time. Empty drop rows are ignored.
+   - **Reorder:** "⇅ Reorder exercises" switches to a compact list.
+     - "Do next" puts an exercise straight after the one you're on, and ↑ ↓ move it one place.
+     - "Save this order for every Push day" (or Pull, Legs, Shoulders) makes the new order your usual one. It only reorders your split: exercises you added just for today aren't added, and ones you skipped keep their place at the end.
 3. **Exercises:** pick any exercise to see or edit its note, a chart of your progress, and its history with your average rest.
 4. **Settings:**
    - Rest target, beep, and keeping the screen on.
@@ -73,6 +77,11 @@ A web app for your iPhone 16 Pro Max and your PC. On the iPhone you add it to th
   - Up: heavier, or the same weight for more reps.
   - Same: same weight and same reps.
   - Down: anything else.
+- **Drop sets:**
+  - Drops share their set's number and times, with no rest in between. Each drop is its own row with Drop = 1, 2, 3…
+  - The weight hint for a drop comes from last time's same drop. If there's no history, it continues the step down: after 50 → 45 it suggests 40.
+  - Drops count toward volume but not toward progress markers or the 1-rep-max chart.
+  - You can switch "Drop set on the last set every time" on or off for any exercise in the Exercises tab.
 - **Notes:** one per exercise. They're stored in the sheet's Notes tab, so your phone and PC show the same notes.
 - **Fixing mistakes:** during a workout, edit the boxes; to undo a finished set, tap its tick twice. For past sessions, edit the Google Sheet and the app picks up the change.
 
@@ -84,7 +93,7 @@ A web app for your iPhone 16 Pro Max and your PC. On the iPhone you add it to th
 |---|---|
 | Date, Time, Day | When the set started, and which day of your split |
 | Exercise, Variation | The exercise and its type, grip or bodyweight mode |
-| Set, Side | Set number, and L or R for one-arm sets |
+| Set, Drop, Side | Set number; drop number (blank for the main set); L or R for one-arm sets |
 | kg, Reps | Weight and reps |
 | Start, End | Clock times of the set |
 | Set (s), Rest (s) | Set length and the rest before it, in seconds |
@@ -94,7 +103,7 @@ A web app for your iPhone 16 Pro Max and your PC. On the iPhone you add it to th
 
 **Notes tab:** Exercise, Note, Updated.
 
-The Excel workbook adds **Est 1RM** (weight × (1 + reps ÷ 30)) and **Volume** (weight × reps) to each set.
+The Excel workbook adds **Est 1RM** (weight × (1 + reps ÷ 30), main sets only) and **Volume** (weight × reps, drops included) to each set. To look at main sets only, filter Drop to blank.
 
 ## Privacy
 
