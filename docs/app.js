@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.1.0';
+  const VERSION = '3.1.1';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -161,6 +161,9 @@
     setupOpen: null,
   };
   if (typeof S.settings.sound !== 'string') S.settings.sound = S.settings.sound ? 'bleep' : 'off';
+  // Rest is set per exercise in Workout Setup; these are only the fallbacks.
+  S.settings.restSec = 120;
+  S.settings.warmRest = 60;
 
   function loadLibrary() {
     let lib = load(KEYS.library, null);
@@ -1996,7 +1999,6 @@
     return h;
   }
   function settingsView() {
-    const opts = (vals, cur) => vals.map((v) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${clock(v)}</option>`).join('');
     const sounds = SOUNDS.map(
       ([v, t]) => `<div class="sound-row"><label class="check"><input type="radio" name="sound" data-setting-radio="sound" value="${v}" ${S.settings.sound === v ? 'checked' : ''}> ${t}</label>
         ${v === 'off' ? '' : `<button class="btn small" data-action="play" data-sound="${v}">Test</button>`}</div>`
@@ -2034,8 +2036,7 @@
       </section>
       <section class="panel">
         <h2>Timer And Sound</h2>
-        <label class="field">Default Rest<select data-setting="restSec">${opts([60, 90, 120, 150, 180, 240, 300], S.settings.restSec)}</select></label>
-        <label class="field">Rest After A Warm-Up Set<select data-setting="warmRest">${opts([30, 45, 60, 90, 120], S.settings.warmRest)}</select></label>
+        <p class="muted small">Rest times are set for each exercise in Workout Setup below.</p>
         <h3>Rest Over Sound</h3>
         ${sounds}
         <p class="muted small">The sound is set to briefly lower your music while it plays. Test it with music on: if your music stops instead, tell me and I'll change how it plays. Your phone can't make the sound while it's locked, so the screen stays on during workouts.</p>
