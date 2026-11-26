@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.4.0';
+  const VERSION = '3.4.1';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -1724,13 +1724,18 @@
     if (sets.some((s) => s.start && !s.end)) return false;
     return sets.findIndex((s) => !s.warm && !s.start && !s.end) === i;
   }
-  /** The active set gets "+ Drop Set": the one running, the one you just finished, or the next one up. */
+  /**
+   * The active set gets "+ Drop Set": the one running, the one you just finished, or the next one up.
+   * "Next up" counts warm-ups, so while a warm-up is still to do, no working set is active yet.
+   */
   function isActiveSet(k, i) {
-    const s = S.current.items[k].sets[i];
+    const sets = S.current.items[k].sets;
+    const s = sets[i];
     if (s.warm) return false;
     if (s.start && !s.end) return true;
     if (s.end && s.end === S.current.lastEnd) return true;
-    return !runningSet() && isNextSet(k, i);
+    if (runningSet()) return false;
+    return sets.findIndex((x) => !x.start && !x.end) === i;
   }
 
   /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
