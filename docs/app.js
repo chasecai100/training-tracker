@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -496,7 +496,8 @@
         const want = cfg.choices && cfg.choices[n] && cfg.choices[n][g.label];
         choices[g.label] = choiceOf(def, g.label, want) ? want : g.choices[0].name;
       });
-      c.items[k] = { name: n, choices, cfg: clone(cfg), sets: [] };
+      const partials = cfg.partials != null ? !!cfg.partials : !!def.partials;
+      c.items[k] = { name: n, choices, cfg: clone(cfg), partials, sets: [] };
       b.keys.push(k);
     });
     b.keys.forEach((k) => buildSets(k, cfg.sets || 3, cfg.warmups || 0));
@@ -1546,7 +1547,8 @@
       const notes = [...new Set(names)].map((n) => workoutNote(n, true)).join('');
       return `<section class="card" id="b-${b.id}">${head}<div class="card-peek">${lines ? `<div class="last muted small">${lines}</div>` : ''}${notes}</div></section>`;
     }
-    let body = [...new Set(names)].map((n) => (sup && noteOf(n) ? `<div class="sub-name">${esc(n)}</div>` : '') + workoutNote(n)).join('');
+    let body = partialToggles(b);
+    body += [...new Set(names)].map((n) => (sup && noteOf(n) ? `<div class="sub-name">${esc(n)}</div>` : '') + workoutNote(n)).join('');
     b.keys.forEach((k) => (body += choiceSelects(k, sup)));
     const lines = b.keys.map((k) => lastLine(k, sup) || '<span class="muted">No history yet</span>').join('<br>');
     body += `<div class="last small">${lines}</div>`;
@@ -1593,15 +1595,30 @@
       .join('');
   }
 
+  const partialsOn = (k) => !!S.current.items[k].partials;
   function rowType(k) {
     const def = itemDef(k);
-    return def.bodyweight ? (def.partials ? 'bwp' : 'bw') : 'normal';
+    const p = partialsOn(k);
+    return def.bodyweight ? (p ? 'bwp' : 'bw') : p ? 'np' : 'normal';
   }
   function headRow(k) {
     const def = itemDef(k);
     const type = rowType(k);
-    if (type === 'normal') return `<div class="set-head normal"><span></span><span>${def.kgLabel || 'Kg'}</span><span></span><span>Reps</span></div>`;
-    return `<div class="set-head ${type}"><span></span><span>Type</span><span>Kg / Band</span><span></span><span>Reps</span>${type === 'bwp' ? '<span>Partial</span>' : ''}</div>`;
+    const part = partialsOn(k) ? '<span>Partial</span>' : '';
+    if (!def.bodyweight) return `<div class="set-head ${type}"><span></span><span>${def.kgLabel || 'Kg'}</span><span></span><span>Reps</span>${part}</div>`;
+    return `<div class="set-head ${type}"><span></span><span>Type</span><span>Kg / Band</span><span></span><span>Reps</span>${part}</div>`;
+  }
+  /** The switch at the top of a card that adds a partial reps box to every set of the exercise. */
+  function partialToggles(b) {
+    const sup = b.keys.length > 1;
+    return `<div class="toggles">${b.keys
+      .map((k) => {
+        const it = S.current.items[k];
+        return `<label class="switch"><input type="checkbox" data-partials="${k}" ${it.partials ? 'checked' : ''}><span class="track"></span>Partial Reps${
+          sup ? ` · ${esc(it.name)}` : ''
+        }</label>`;
+      })
+      .join('')}</div>`;
   }
 
   function pairPickerHtml(b) {
@@ -1651,7 +1668,7 @@
     else if (s.start) h += `<button class="sbtn run" data-action="set-btn" ${a}><span>End</span><span class="rt" id="rt-${s.id}"></span></button>`;
     else h += `<button class="sbtn" data-action="set-btn" ${a}>Start</button>`;
     h += input('reps', s.reps, ph.reps, 'numeric', 'Reps', s.end && !s.warm && num(s.reps) == null ? 'need' : '');
-    if (type === 'bwp') h += input('partials', s.partials, ph.partials, 'numeric', 'Partial reps');
+    if (partialsOn(k)) h += input('partials', s.partials, ph.partials, 'numeric', 'Partial reps');
     h += '</div>';
     (s.drops || []).forEach((d, j) => (h += dropRowHtml(k, i, j, label)));
     h += footerHtml(k, i, label);
@@ -1663,11 +1680,12 @@
     const d = s.drops[j];
     const ph = dropPlaceholder(k, i, j);
     const a = `data-k="${k}" data-i="${i}" data-d="${j}"`;
-    return `<div class="drop-row normal${label ? ' labeled' : ''}${s.end ? ' done' : ''}">
+    return `<div class="drop-row ${partialsOn(k) ? 'np' : 'normal'}${label ? ' labeled' : ''}${s.end ? ' done' : ''}">
       <span class="drop-mark" aria-hidden="true">↳</span>
       <input data-f="kg" ${a} value="${esc(d.kg)}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg">
       <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button>
       <input data-f="reps" ${a} value="${esc(d.reps)}" placeholder="${ph.reps == null ? '' : esc(ph.reps)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} reps"${s.end ? '' : ' disabled'}>
+      ${partialsOn(k) ? '<span></span>' : ''}
     </div>`;
   }
 
@@ -1675,6 +1693,14 @@
     const sets = S.current.items[k].sets;
     if (sets.some((s) => s.start && !s.end)) return false;
     return sets.findIndex((s) => !s.warm && !s.start && !s.end) === i;
+  }
+  /** The active set gets "+ Drop Set": the one running, the one you just finished, or the next one up. */
+  function isActiveSet(k, i) {
+    const s = S.current.items[k].sets[i];
+    if (s.warm) return false;
+    if (s.start && !s.end) return true;
+    if (s.end && s.end === S.current.lastEnd) return true;
+    return !runningSet() && isNextSet(k, i);
   }
 
   /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
@@ -1701,9 +1727,8 @@
     }
     if (s.warm) {
       if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ Remove Warm-Up</button>`;
-    } else if (canDrop(k) && it.cfg.style !== 'ultimate' && it.cfg.style !== 'double') {
-      const lastRows = unitRows(k, unitsOf(k) - 1);
-      if (s.start || s.end || lastRows.includes(i) || s.drops.length) inner += `<button class="link drop-add" data-action="drop-add" ${a}>+ Drop</button>`;
+    } else if (canDrop(k) && it.cfg.style !== 'ultimate' && isActiveSet(k, i)) {
+      inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
     }
     if (it.cfg.style === 'ultimate' && !s.warm && !s.drops.length && !s.end) inner += '<span class="muted">Drops fill in once you enter the weight</span>';
     return `<div class="markers${label ? ' indent' : ''}" id="ft-${s.id}"${inner ? '' : ' hidden'}>${inner}</div>`;
@@ -1926,6 +1951,8 @@
     if (it.names.length > 1) {
       h += `<label class="setup-row"><span>Rest Between Exercises</span>${sel('restBetween', [[0, 'No Timer']].concat([15, 30, 45, 60, 90, 120].map((v) => [v, clock(v)])), it.restBetween || 0)}</label>`;
     }
+    const partialDefault = it.partials != null ? it.partials : it.names.some((n) => exDef(n).partials);
+    h += `<label class="setup-row"><span>Partial Reps Box On</span><input type="checkbox" data-setup="partials" ${at} ${partialDefault ? 'checked' : ''}></label>`;
     const anyWeighted = it.names.some((n) => !exDef(n).bodyweight);
     if (anyWeighted) {
       h += `<label class="setup-row"><span>Set Style</span>${sel('style', STYLES, it.style || 'normal')}</label>`;
@@ -2559,6 +2586,10 @@
         persist();
         render();
       }
+    } else if (el.dataset.partials && S.current) {
+      S.current.items[el.dataset.partials].partials = el.checked;
+      persist();
+      render();
     } else if (el.dataset.choice && S.current) {
       const k = el.dataset.k;
       const label = el.dataset.choice;
@@ -2595,6 +2626,7 @@
       else if (f === 'step') it.step = +el.value;
       else if (f === 'floors') it.floors = el.value.split(',').map((x) => num(x)).filter((x) => x != null && x > 0);
       else if (f === 'band') it.band = tc(el.value.trim()) || 'Purple';
+      else if (f === 'partials') it.partials = el.checked;
       saveLibrary();
       render();
     } else if (el.dataset.setupChoice != null) {

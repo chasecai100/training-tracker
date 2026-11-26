@@ -238,6 +238,8 @@ input[type="checkbox"] { width: 22px; height: 22px; padding: 0; accent-color: va
 .labeled.normal { grid-template-columns: 60px 1fr 66px 1fr; }
 .labeled.bw { grid-template-columns: 60px 58px 1fr 62px 1fr; }
 .labeled.bwp { grid-template-columns: 56px 54px 1fr 58px 1fr 1fr; }
+.np { grid-template-columns: 34px 1fr 62px 1fr 1fr; }
+.labeled.np { grid-template-columns: 56px 1fr 58px 1fr 1fr; }
 input:disabled { opacity: 0.35; }
 .bwp select, .labeled.bw select { font-size: 14px; padding: 0 14px 0 6px; background-position: right 3px center; }
 .set-row [data-f="band"] { font-size: 14px; }
@@ -274,7 +276,30 @@ input:disabled { opacity: 0.35; }
 .sbtn.armed { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 14px; }
 .markers { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: -4px 0 8px 34px; font-size: 12.5px; }
 .markers.indent { margin-left: 68px; }
-.drop-add { font-size: 13px; color: var(--accent-text); padding: 2px 0; margin-left: auto; font-weight: 650; }
+.drop-add {
+  appearance: none;
+  margin-left: auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  color: #fff;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+/* Partial reps switch at the top of a card */
+.toggles { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); cursor: pointer; min-height: 32px; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch .track { width: 40px; height: 24px; border-radius: 999px; background: var(--input); border: 1px solid var(--line-strong); position: relative; transition: background 0.15s; flex: none; }
+.switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #9a9aa3; transition: transform 0.15s, background 0.15s; }
+.switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(16px); background: #fff; }
+.switch input:checked ~ * { color: var(--text); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-row input[type="checkbox"] { min-width: 0; width: 22px; height: 22px; }
 .drop-row { display: grid; gap: 8px; align-items: center; margin: -2px 0 8px; }
 .drop-row input { height: 38px; font-size: 16px; text-align: center; padding: 0 4px; background: var(--card2); }
 .drop-row.done input { background-color: var(--ok-bg); }
