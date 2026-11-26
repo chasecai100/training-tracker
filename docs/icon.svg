@@ -4,18 +4,21 @@
     <clipPath id="flame-base"><rect x="0" y="0" width="270" height="114"/></clipPath>
   </defs>
   <rect width="512" height="512" fill="#0b0b0c"/>
-  <!-- Flame dumbbell, drawn around (135, 116) and centred in the square -->
-  <g transform="translate(256 256) scale(1.79) translate(-135 -116)" fill="#ff2b2b">
-    <!-- Small outer flames: solid, with a tail running down the outside of the plates -->
-    <path id="small-flame" d="M50 132 C44 114 48 98 56 80 C60 94 70 102 79 111 L66 118 C58 120 54 126 54 132 Z"/>
-    <use href="#small-flame" transform="translate(270 0) scale(-1 1)"/>
-    <!-- Medium and centre flames: solid tips, hollow bodies -->
-    <g clip-path="url(#flame-base)" fill-rule="evenodd">
-      <path id="medium-flame" d="M76 120 C72 96 78 74 90 54 C94 68 104 78 110 88 C116 98 118 106 117 120 Z
-               M87 121 C85 106 88 94 94 82 C98 92 104 100 106 121 Z"/>
-      <use href="#medium-flame" transform="translate(270 0) scale(-1 1)"/>
-      <path d="M109 120 C108 92 116 68 125 50 C130 40 133 30 135 20 C137 30 140 40 145 50 C154 68 162 92 161 120 Z
-               M121 121 C120 100 126 80 135 58 C144 80 150 100 149 121 Z"/>
+  <!-- Flame dumbbell, centred in the square -->
+  <g transform="translate(256 256) scale(1.79) translate(-135 -111)" fill="#ff2b2b">
+    <!-- Flames sit a little above the dumbbell so they never touch it -->
+    <g transform="translate(0 -9)">
+      <!-- Small outer flames: solid -->
+      <path id="small-flame" d="M53 114 C46 100 49 92 56 79 C60 94 70 102 79 111 L77 114 Z"/>
+      <use href="#small-flame" transform="translate(270 0) scale(-1 1)"/>
+      <!-- Medium and centre flames: solid tips, hollow bodies -->
+      <g clip-path="url(#flame-base)" fill-rule="evenodd">
+        <path id="medium-flame" d="M76 120 C72 96 78 74 90 54 C94 68 104 78 110 88 C116 98 118 106 117 120 Z
+                 M87 121 C85 106 88 94 94 82 C98 92 104 100 106 121 Z"/>
+        <use href="#medium-flame" transform="translate(270 0) scale(-1 1)"/>
+        <path d="M109 120 C108 92 116 68 125 50 C130 40 133 30 135 20 C137 30 140 40 145 50 C154 68 162 92 161 120 Z
+                 M121 121 C120 100 126 80 135 58 C144 80 150 100 149 121 Z"/>
+      </g>
     </g>
     <!-- Dumbbell -->
     <rect x="28" y="156" width="214" height="13" rx="3"/>

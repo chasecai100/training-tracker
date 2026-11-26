@@ -16,7 +16,7 @@ const SETS = 'Sets';
 const SESSIONS = 'Sessions';
 const NOTES = 'Notes';
 const HEADERS = {
-  Sets: ['Date', 'Time', 'Day', 'Exercise', 'Variation', 'Set', 'Drop', 'Side', 'kg', 'Reps', 'Start', 'End', 'Set (s)', 'Rest (s)', 'Session', 'ID'],
+  Sets: ['Date', 'Time', 'Day', 'Exercise', 'Variation', 'Type', 'Set', 'Drop', 'Side', 'kg', 'Reps', 'Start', 'End', 'Set (s)', 'Rest (s)', 'Session', 'ID'],
   Sessions: ['Session', 'Date', 'Day', 'Start', 'End', 'Length (min)', 'Sets', 'Work (min)', 'Rest (min)'],
   Notes: ['Exercise', 'Note', 'Updated'],
 };
