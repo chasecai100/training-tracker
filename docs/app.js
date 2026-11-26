@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.2.0';
+  const VERSION = '3.3.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -47,9 +47,9 @@
     ['beep', 'Classic Beep'],
     ['off', 'Off'],
   ];
+  // Set styles. (A drop set can be added to any set with "+ Drop Set" while it's the active set.)
   const STYLES = [
     ['normal', 'Normal'],
-    ['dropLast', 'Drop Set On Last Set'],
     ['double', 'Two-Weight Drop Every Set'],
     ['ultimate', 'Ultimate Drop Set'],
   ];
@@ -152,7 +152,7 @@
   let notice = '';
   const S = {
     settings: Object.assign(
-      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false },
+      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false, partials: true },
       load(KEYS.settings, {})
     ),
     library: loadLibrary(),
@@ -189,6 +189,8 @@
         if (!Array.isArray(lib.days[d])) lib.days[d] = clone(DEF.days[d] || []);
       });
     }
+    // "Drop Set On Last Set" was retired: drops can now be added to any active set.
+    DAYS.forEach((d) => (lib.days[d] || []).forEach((it) => it.style === 'dropLast' && delete it.style));
     store(KEYS.library, lib);
     return lib;
   }
@@ -563,14 +565,6 @@
           if (!s.drops.length) s.drops = [newDrop()];
         } else if (style === 'ultimate') {
           regenUltimate(k, i);
-        } else if (style === 'dropLast') {
-          if (u === units - 1 && !s.drops.length) {
-            const p = sideEntry(k, i);
-            const n = (p && p.drops.length) || 3;
-            for (let j = 0; j < n; j++) s.drops.push(newDrop());
-          } else if (u !== units - 1 && s.drops.length && s.drops.every((d) => !d.kg)) {
-            s.drops = [];
-          }
         }
       });
     }
@@ -1565,7 +1559,7 @@
       const notes = [...new Set(names)].map((n) => workoutNote(n, true)).join('');
       return `<section class="card" id="b-${b.id}">${head}<div class="card-peek">${lines ? `<div class="last muted small">${lines}</div>` : ''}${notes}</div></section>`;
     }
-    let body = partialToggles(b);
+    let body = S.settings.partials ? partialToggles(b) : '';
     body += [...new Set(names)].map((n) => (sup && noteOf(n) ? `<div class="sub-name">${esc(n)}</div>` : '') + workoutNote(n)).join('');
     b.keys.forEach((k) => (body += choiceSelects(k, sup)));
     const lines = b.keys.map((k) => lastLine(k, sup) || '<span class="muted">No history yet</span>').join('<br>');
@@ -1613,7 +1607,7 @@
       .join('');
   }
 
-  const partialsOn = (k) => !!S.current.items[k].partials;
+  const partialsOn = (k) => !!S.settings.partials && !!S.current.items[k].partials;
   function rowType(k) {
     const def = itemDef(k);
     const p = partialsOn(k);
@@ -1970,10 +1964,12 @@
       h += `<label class="setup-row"><span>Rest Between Exercises</span>${sel('restBetween', [[0, 'No Timer']].concat([15, 30, 45, 60, 90, 120].map((v) => [v, clock(v)])), it.restBetween || 0)}</label>`;
     }
     const partialDefault = it.partials != null ? it.partials : it.names.some((n) => exDef(n).partials);
-    h += `<label class="setup-row"><span>Partial Reps Box On</span><input type="checkbox" data-setup="partials" ${at} ${partialDefault ? 'checked' : ''}></label>`;
+    if (S.settings.partials) {
+      h += `<label class="setup-row"><span>Partial Reps Box On</span><input type="checkbox" data-setup="partials" ${at} ${partialDefault ? 'checked' : ''}></label>`;
+    }
     const anyWeighted = it.names.some((n) => !exDef(n).bodyweight);
     if (anyWeighted) {
-      h += `<label class="setup-row"><span>Set Style</span>${sel('style', STYLES, it.style || 'normal')}</label>`;
+      h += `<label class="setup-row"><span>Set Style</span>${sel('style', STYLES, STYLES.some((x) => x[0] === it.style) ? it.style : 'normal')}</label>`;
       if (it.style === 'ultimate') {
         h += `<label class="setup-row"><span>Drop By (Kg)</span>${sel('step', [[1, '1'], [1.25, '1.25'], [2.5, '2.5'], [5, '5']], it.step || 2.5)}</label>`;
         h += `<label class="setup-row"><span>Lowest Weight Per Set</span><input data-setup="floors" ${at} value="${esc((it.floors || [5, 2.5]).join(', '))}" placeholder="5, 2.5" inputmode="decimal"></label>`;
@@ -2058,9 +2054,11 @@
         <label class="check"><input type="checkbox" data-setting="keepAwake" ${S.settings.keepAwake ? 'checked' : ''}> Keep The Screen On During A Workout</label>
       </section>
       <section class="panel">
-        <h2>Supersets</h2>
-        <label class="check"><input type="checkbox" data-setting="supersets" ${S.settings.supersets ? 'checked' : ''}> Show Superset Options</label>
+        <h2>Options</h2>
+        <label class="check"><input type="checkbox" data-setting="supersets" ${S.settings.supersets ? 'checked' : ''}> Supersets</label>
         <p class="muted small">When on, each exercise gets a “Superset With…” button, and Workout Setup can link exercises. Pull-Up + Chin-Up stays a superset either way.</p>
+        <label class="check"><input type="checkbox" data-setting="partials" ${S.settings.partials ? 'checked' : ''}> Partial Reps</label>
+        <p class="muted small">When on, each exercise card has a Partial Reps switch, and Workout Setup can turn it on by default. When off, partial reps are hidden everywhere.</p>
       </section>
       <section class="panel">
         <h2>Workout Setup</h2>
@@ -2233,18 +2231,6 @@
         while (unitsOf(k) < target) {
           const u = unitsOf(k);
           sidesOf(k).forEach((side) => it.sets.push(newSet(k, { side, unit: u })));
-        }
-        if (it.cfg.style === 'dropLast') {
-          // The drop set belongs on the last set: move empty drop rows down.
-          const prev = unitRows(k, target - 2);
-          const last = unitRows(k, target - 1);
-          prev.forEach((pi, n) => {
-            const p = it.sets[pi];
-            if (p.drops.length && dropUntouched(p) && last[n] != null) {
-              it.sets[last[n]].drops = p.drops;
-              p.drops = [];
-            }
-          });
         }
         applyStyle(k);
       });
@@ -2625,7 +2611,7 @@
       S.settings[key] = el.type === 'checkbox' ? el.checked : +el.value;
       saveSettings();
       if (key === 'keepAwake') keepAwake(!!S.current);
-      if (key === 'supersets') render();
+      if (key === 'supersets' || key === 'partials') render();
     } else if (el.dataset.settingRadio) {
       S.settings[el.dataset.settingRadio] = el.value;
       saveSettings();

@@ -27,7 +27,9 @@ A web app for your iPhone and PC.
 3. **Exercises:** each exercise's note (edit it here), progress chart, records and history.
 4. **Settings:**
    - **Timer And Sound:** default rest, rest after warm-ups, a choice of rest-over sound with test buttons, and keep the screen on.
-   - **Supersets:** a switch, off by default, that shows the "Superset With…" options.
+   - **Options:**
+    - **Supersets**, off by default: shows the "Superset With…" options.
+    - **Partial Reps**, on by default: shows the Partial Reps switch on each exercise card. When it's off, partial reps are hidden everywhere.
    - **Workout Setup:** every exercise on each day, with its own sets, warm-ups, rest, set style, default types, and bodyweight/band per set.
    - **New Exercise.**
 
@@ -71,8 +73,7 @@ A web app for your iPhone and PC.
 - **Each side timed alone:** one-sided exercises get one row per side (1L, 1R, 2L…), each with its own Start/End and rest. In the sheet, both sides share the set number, with Side L or R.
 - **Warm-ups:** feeler sets, not to failure. They're tagged Type = Warm-up and kept out of progress, PRs, set numbering and Excel's 1-rep max and volume.
 - **Set styles:**
-  - **Normal:** working sets only.
-  - **Drop Set On Last Set:** the last set starts with drop rows.
+  - **Normal:** working sets only. Any set can still get a drop set: "+ Drop Set" appears on the active set (the one running, the one just finished, or the next one up).
   - **Two-Weight Drop Every Set:** each set has weight 1 and weight 2, and you enter both rep counts after End.
   - **Ultimate Drop Set:** drop rows fill in automatically from your starting weight, going down in fixed steps to a floor per set.
 - **Drops:** each drop is its own row (Drop = 1, 2, 3…) on the same set number. Drops count toward volume, but not toward progress or the 1-rep max.

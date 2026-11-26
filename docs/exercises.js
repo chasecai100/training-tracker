@@ -12,8 +12,9 @@
 //   sets, warmups: how many working sets and warm-up sets load.
 //   rest: seconds after a set (0 = no rest timer; leave out for the default).
 //   restBetween: superset only, seconds between the two exercises in a round.
-//   style: 'normal' | 'dropLast' (drop set on the last set) | 'double' (two weights every set)
+//   style (the "Set Style"): 'normal' | 'double' (two weights every set)
 //          | 'ultimate' (drops of `step` kg down to floors[set], e.g. 5 kg then 2.5 kg).
+//          Any set can also get a drop set with "+ Drop Set" while it's the active set.
 //   choices: default picker choices per exercise. modes/band: bodyweight set types per set.
 window.TT_DEFAULTS = {
   version: 4,
