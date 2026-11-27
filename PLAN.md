@@ -63,7 +63,7 @@ A web app for your iPhone and PC.
 | | Pec Deck Fly | 5 | 2:00 | 1 warm-up |
 | | Shoulder Press | 8 | 1:30 | Smith / Dumbbell |
 | | Dumbbell Pullover | 5 | 1:30 | |
-| | Tricep | 2 | 2:00 | Overhead Extension / Pushdown · Single Rope / Double Cable / V Bar · ultimate drop set (2.5 kg steps to 5 kg, then 2.5 kg) |
+| | Tricep | 2 | 2:00 | Overhead Extension / Pushdown · Single Rope / Double Cable / V Bar · ultimate drop set (2.5 kg steps down to 2.5 kg) |
 | Pull | Pull-Up + Chin-Up superset | 5 rounds | 1:00 between, 2:00 after | BW sets 1–2, purple band sets 3–5 · full and partial reps |
 | | Seated Row | 5 | 2:00 | Wide MAG Grip (or Close MAG, Medium MAG, V Grip) |
 | | Core Exercise | 3 | 1:30 | Ab Crunch |
@@ -94,7 +94,7 @@ A web app for your iPhone and PC.
 - **Set styles:**
   - **Normal:** working sets only. A set can still get a drop set: "+ Drop Set" appears under the set you're about to do (or doing), so you can enter the drop weight before you start. "+ Another Drop" adds more.
   - **Two-Weight Drop Every Set:** each set has weight 1 and weight 2, and you enter both rep counts after End.
-  - **Ultimate Drop Set:** drop rows fill in automatically from your starting weight, going down in fixed steps to a floor per set.
+  - **Ultimate Drop Set:** drop rows fill in automatically from your starting weight, going down in fixed steps all the way to 2.5 kg on every set. Remove (✕) the drops you don't get to.
 - **Drop sets are one continuous set:** one Start, straight through every drop, one End ("End Drop Set"). The rest timer starts at End, and then you enter the reps for the set and every drop.
 - **Drops:** each drop is its own row (Drop = 1, 2, 3…) on the same set number. Drops count toward volume, but not toward progress or the 1-rep max. Drops have their own partials when partials are on. A drop with no reps or partials entered isn't saved.
 - **Rest timing:**

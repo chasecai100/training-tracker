@@ -13,7 +13,7 @@
 //   rest: seconds after a set (0 = no rest timer; leave out for the default).
 //   restBetween: superset only, seconds between the two exercises in a round.
 //   style (the "Set Style"): 'normal' | 'double' (two weights every set)
-//          | 'ultimate' (drops of `step` kg down to floors[set], e.g. 5 kg then 2.5 kg).
+//          | 'ultimate' (drops of `step` kg all the way down to 2.5 kg on every set).
 //          Any set can also get a drop set with "+ Drop Set" while it's the active set.
 //   choices: default picker choices per exercise. modes/band: bodyweight set types per set.
 window.TT_DEFAULTS = {
@@ -78,7 +78,6 @@ window.TT_DEFAULTS = {
         rest: 120,
         style: 'ultimate',
         step: 2.5,
-        floors: [5, 2.5],
         choices: { Tricep: { Setup: 'Overhead Extension', Attachment: 'Single Rope' } },
       },
     ],
@@ -102,7 +101,6 @@ window.TT_DEFAULTS = {
         rest: 120,
         style: 'ultimate',
         step: 2.5,
-        floors: [5, 2.5],
         choices: { Biceps: { Equipment: 'Cable', Arms: 'Double' } },
       },
       { names: ['Biceps'], sets: 5, rest: 60, style: 'double', choices: { Biceps: { Equipment: 'Bench Supported', Arms: 'Single' } } },

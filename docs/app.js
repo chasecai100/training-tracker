@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.8.0';
+  const VERSION = '3.8.1';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -221,6 +221,8 @@
     }
     // "Drop Set On Last Set" was retired: drops can now be added to any active set.
     DAYS.forEach((d) => (lib.days[d] || []).forEach((it) => it.style === 'dropLast' && delete it.style));
+    // Ultimate drop sets now always go down to 2.5 kg, so the per-set lowest weights are gone.
+    DAYS.forEach((d) => (lib.days[d] || []).forEach((it) => delete it.floors));
     store(KEYS.library, lib);
     return lib;
   }
@@ -613,17 +615,19 @@
     }
   }
 
-  /** Ultimate drop set: from the set's weight, step down by `step` kg to the floor for this set. */
+  /**
+   * Ultimate drop set: from the set's weight, step down by `step` kg all the way to the lightest
+   * plate (2.5 kg) on every set. Remove the drops you don't get to.
+   */
+  const ULTIMATE_FLOOR = 2.5;
   function regenUltimate(k, i) {
     const it = S.current.items[k];
     const s = it.sets[i];
     if (s.warm || it.cfg.style !== 'ultimate' || s.drops.some((d) => d.reps)) return;
     const start = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
     const step = num(it.cfg.step) || 2.5;
-    const floors = (it.cfg.floors && it.cfg.floors.length ? it.cfg.floors : [step]).map(Number);
-    const floor = floors[Math.min(unitIndex(k, i), floors.length - 1)];
     const ws = [];
-    if (start) for (let w = Math.round((start - step) * 100) / 100; w >= floor - 1e-9 && ws.length < 30; w = Math.round((w - step) * 100) / 100) ws.push(w);
+    if (start) for (let w = Math.round((start - step) * 100) / 100; w >= ULTIMATE_FLOOR - 1e-9 && ws.length < 30; w = Math.round((w - step) * 100) / 100) ws.push(w);
     // Until the set is done its ladder stays as hints, so it follows the weight you pick.
     s.drops = ws.map((w, j) => Object.assign(s.drops[j] || newDrop(), { kg: s.end ? fmt(w) : '' }));
   }
@@ -2592,7 +2596,7 @@
       h += `<label class="setup-row"><span>Set Style</span>${sel('style', STYLES, STYLES.some((x) => x[0] === it.style) ? it.style : 'normal')}</label>`;
       if (it.style === 'ultimate') {
         h += `<label class="setup-row"><span>Drop By (Kg)</span>${sel('step', [[1, '1'], [1.25, '1.25'], [2.5, '2.5'], [5, '5']], it.step || 2.5)}</label>`;
-        h += `<label class="setup-row"><span>Lowest Weight Per Set</span><input data-setup="floors" ${at} value="${esc((it.floors || [5, 2.5]).join(', '))}" placeholder="5, 2.5" inputmode="decimal"></label>`;
+        h += '<p class="muted small">Every set drops all the way to 2.5 kg. Remove the drops you don’t get to.</p>';
       }
     }
     it.names.forEach((n) => {
@@ -3348,7 +3352,6 @@
       else if (f === 'restBetween') it.restBetween = +el.value;
       else if (f === 'style') it.style = el.value;
       else if (f === 'step') it.step = +el.value;
-      else if (f === 'floors') it.floors = el.value.split(',').map((x) => num(x)).filter((x) => x != null && x > 0);
       else if (f === 'band') it.band = tc(el.value.trim()) || 'Purple';
       else if (f === 'partials') it.partials = el.checked;
       saveLibrary();
