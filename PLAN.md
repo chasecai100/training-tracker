@@ -25,10 +25,15 @@ A web app for your iPhone and PC.
      - Delete the whole workout.
      - Changes save as you type and sync like any set. "Last time", PRs, history and the workout's totals follow.
 2. **Workout:**
-   - **Pinned top bar:** the total workout time, plus a big countdown to your next set. While a set is running, it shows the set timer and your "to beat" target instead.
+   - **Pinned top bar:** the total workout time, plus a big countdown to your next set. While a set is running, it shows the set timer instead.
    - **Set rows:** each row reads set number, then weight, then Start/End, then reps. Reps (and partials) unlock once you tap End.
    - **Weight carry-over:** when a set finishes, the sets after it hint its weight (and drop weights). Hints show dim, except on the row you're on, where the hint shows white as the value. Tapping a white hint selects it so typing replaces it, and an unchanged hint is saved when you tap End.
-   - **On each exercise:** its note (read-only), type pickers, what you did last time, up/same/down markers, PR badges, warm-up rows (W1…), and drop rows.
+   - **On each exercise:** a closed card is just its name. Opening it shows its note (read-only), type pickers, up/same/down markers, PR badges, warm-up rows (W1…) and drop rows. There's no "Last time" or "To Beat" line; last time's numbers only show as the dim hints in the boxes.
+   - **Fix Time:** under each finished set, "set 0:42 · rest 2:00 ✎" opens Fix Set Time. A working set under 5 seconds shows "Forgot Start? Fix Time" instead.
+     - A longer time moves the set's start earlier and takes it off the rest before.
+     - A shorter time moves its end earlier and adds it to the rest after.
+     - "Use Your Usual" fills in your typical set time for that exercise.
+     - Past workouts have the same thing in Edit.
    - **Reorder** (Do Next, ↑ ↓, save the order), and **search** to add or create any exercise.
 3. **Exercises:** each exercise's note (edit it here), progress chart, records and history.
 4. **Settings:**
@@ -88,11 +93,10 @@ A web app for your iPhone and PC.
   - Rest is recorded from the end of one set to the start of the next.
   - The countdown uses the exercise's rest from Workout Setup. In a superset it uses "Rest Between Exercises" within a round. After a warm-up it uses the warm-up rest.
   - "No Rest" means the timer only counts up.
-- **Progress, PRs and targets:**
+- **Progress and PRs:**
   - **Up** means heavier, or the same weight for more reps.
   - **PRs:** heaviest weight, best estimated 1-rep max, or most reps at a weight.
-  - **"To beat":** last time's same set with one more rep.
-- **Notes:** one per exercise, stored in the sheet's Notes tab. Edit them in Exercises; workouts only show them.
+- **Notes:** one per exercise, stored in the sheet's Notes tab. Edit them in Exercises; a workout only shows them on an open exercise.
 - **Old names:** history logged under earlier names (Pull-up, Triceps, Tricep Overhead Extension, Ab Raise…) is read under today's names, so "last time", PRs and notes carry over.
 
 ## Spreadsheet layout

@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.6.0';
+  const VERSION = '3.7.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -59,6 +59,8 @@
     ['beep', 'Classic Beep'],
     ['off', 'Off'],
   ];
+  // A working set shorter than this was almost certainly started late (forgot to tap Start).
+  const SHORT_SET = 5;
   // Set styles. (A drop set can be added to any set with "+ Drop Set" while it's the active set.)
   const STYLES = [
     ['normal', 'Normal'],
@@ -796,19 +798,6 @@
     if (atOrAbove.length && reps > Math.max(...atOrAbove.map((p) => p[1]))) out.push(`most reps at ${fmt(e.kg)} kg`);
     return out;
   }
-  /** "To beat": last time's same set (and side) with one more rep. */
-  function targetText(k, i, short) {
-    const it = S.current.items[k];
-    if (it.sets[i].warm) return '';
-    const p = sideEntry(k, i);
-    if (!p || p.reps == null) return '';
-    const def = exDef(it.name);
-    const w = weightLabel(Object.assign({}, p, { repsR: null }), def);
-    const main = `${w ? w + ' × ' : ''}${p.reps + 1}`;
-    if (short) return main;
-    const heavier = !def.bodyweight || p.variation === 'Weighted';
-    return `To Beat: ${main}${heavier ? ', Or Go Heavier' : ''}`;
-  }
   function setVolume(k, s) {
     const def = itemDef(k);
     if (s.warm || def.bodyweight) return 0;
@@ -1065,6 +1054,59 @@
     const unfinished = (b) => b.keys.some((k) => c.items[k].sets.some((s) => !s.end));
     const from = c.lastEndKey ? c.blocks.indexOf(blockOf(c.lastEndKey)) : -1;
     return c.blocks.slice(from + 1).find(unfinished) || c.blocks.find(unfinished) || null;
+  }
+
+  // ---------- Fixing a set's time ----------
+  const setSecs = (s) => (s.start && s.end ? Math.max(0, Math.round((new Date(s.end) - new Date(s.start)) / 1000)) : 0);
+  /** "45" = 0:45, "130" or "1:30" or "1.30" = 1:30. */
+  function parseDur(v) {
+    const t = String(v || '').trim().replace('.', ':');
+    let m = t.match(/^(\d{1,2}):(\d{1,2})$/);
+    if (m) return +m[1] * 60 + +m[2];
+    m = t.match(/^\d{1,4}$/);
+    if (!m) return null;
+    return t.length <= 2 ? +t : +t.slice(0, -2) * 60 + +t.slice(-2);
+  }
+  /** Your usual time for a working set of this exercise (the middle of your recent ones). */
+  function usualSetTime(name) {
+    const xs = allSets()
+      .filter((r) => r.Exercise === name && r.Type !== 'Warm-up' && !num(r.Drop) && num(r['Set (s)']) >= SHORT_SET)
+      .map((r) => num(r['Set (s)']))
+      .slice(-30)
+      .sort((a, b) => a - b);
+    return xs.length ? xs[Math.floor(xs.length / 2)] : null;
+  }
+  /**
+   * Longer than logged: you forgot to tap Start, so the set began earlier and the rest before it was shorter.
+   * Shorter: you forgot to tap End, so it finished earlier and the rest after it (before the next set) was longer.
+   */
+  function fixSetTime(k, i, dur) {
+    const c = S.current;
+    const s = c.items[k].sets[i];
+    const end = new Date(s.end);
+    const d = dur - setSecs(s);
+    if (!d) return;
+    if (d > 0) {
+      s.start = new Date(end - dur * 1000).toISOString();
+      if (s.rest != null) s.rest = Math.max(0, s.rest - d);
+      if (!c.firstStart || s.start < c.firstStart) c.firstStart = s.start;
+    } else {
+      const oldEnd = s.end;
+      s.end = new Date(end.getTime() + d * 1000).toISOString();
+      if (c.lastEnd === oldEnd) c.lastEnd = s.end;
+      let next = null;
+      forEachSet((kk, ii, x) => {
+        if (x !== s && x.start && x.start >= oldEnd && (!next || x.start < next.x.start)) next = { kk, ii, x };
+      });
+      if (next && next.x.rest != null) {
+        next.x.rest -= d;
+        if (next.x.end) syncSetRows(next.kk, next.ii);
+      }
+    }
+    syncSetRows(k, i);
+    queueSession();
+    persist();
+    scheduleSync();
   }
 
   function undoSet(k, i) {
@@ -1390,6 +1432,7 @@
     else if (S.tab === 'exercises') html = exercisesView();
     else if (S.tab === 'settings') html = settingsView();
     else html = S.current ? workoutView() : S.review ? reviewView() : startView();
+    if (S.modal && S.modal.type === 'time') html += timeModal();
     app.innerHTML = html;
     const tabs = $('#tabs');
     tabs.hidden = !S.settings.pass;
@@ -1486,6 +1529,51 @@
   const rvRows = (id) => allSets().filter((r) => r.Session === id).concat(S.review.drafts.filter((r) => r.Session === id));
   const rvRow = (id) => allSets().find((r) => r.ID === id) || S.review.drafts.find((r) => r.ID === id) || null;
   const isDraft = (r) => S.review.drafts.some((d) => d.ID === r.ID);
+  /** "11:05:17" <-> seconds since midnight (the sheet's Start and End are local clock times). */
+  const toSec = (t) => {
+    const m = String(t || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    return m ? +m[1] * 3600 + +m[2] * 60 + (+m[3] || 0) : null;
+  };
+  const fromSec = (x) => {
+    const v = ((x % 86400) + 86400) % 86400;
+    return `${pad(Math.floor(v / 3600))}:${pad(Math.floor((v % 3600) / 60))}:${pad(v % 60)}`;
+  };
+  const rvDur = (r) => {
+    const st = toSec(r.Start);
+    const en = toSec(r.End);
+    return num(r['Set (s)']) != null ? num(r['Set (s)']) : st != null && en != null ? Math.max(0, en - st) : null;
+  };
+  /** The same rule as during a workout: longer moves the start earlier, shorter moves the end earlier. */
+  function rvFixTime(id, dur) {
+    const r = rvRow(id);
+    const en = r && toSec(r.End);
+    if (en == null) return;
+    const d = dur - (rvDur(r) || 0);
+    if (!d) return;
+    const unit = rvRows(r.Session).filter((x) => sameSet(x, r));
+    const out = [];
+    const patch = (x, p) => (isDraft(x) ? Object.assign(x, p) : out.push(Object.assign({}, x, p)));
+    if (d > 0) {
+      const start = fromSec(en - dur);
+      const rest = num(r['Rest (s)']);
+      unit.forEach((x) =>
+        patch(x, Object.assign({ Start: start, Time: start.slice(0, 5) }, x.ID === r.ID ? { 'Set (s)': dur, 'Rest (s)': rest != null ? Math.max(0, rest - d) : '' } : {}))
+      );
+    } else {
+      const end = fromSec(en + d);
+      unit.forEach((x) => patch(x, Object.assign({ End: end }, x.ID === r.ID ? { 'Set (s)': dur } : {})));
+      // The set that started next counted its rest from the old end.
+      const next = allSets()
+        .filter((x) => x.Session === r.Session && !num(x.Drop) && !sameSet(x, r) && toSec(x.Start) != null && toSec(x.Start) >= en)
+        .sort((a, b) => toSec(a.Start) - toSec(b.Start))[0];
+      if (next && num(next['Rest (s)']) != null) out.push(Object.assign({}, next, { 'Rest (s)': num(next['Rest (s)']) - d }));
+    }
+    if (out.length) {
+      queueRows(out);
+      rvSessionRow(r.Session);
+      scheduleSync();
+    }
+  }
 
   /** A past workout's rows grouped by exercise (and type, for weights), in the order you did them. */
   function reviewGroups(id) {
@@ -1544,6 +1632,46 @@
     return h;
   }
 
+  /** The "Fix Set Time" dialog, for a set in the open workout ({k, i}) or a past one ({id}). */
+  function timeModal() {
+    const M = S.modal;
+    let name;
+    let label;
+    let cur;
+    let warm;
+    if (M.id) {
+      const r = S.review && rvRow(M.id);
+      if (!r) return '';
+      [name, label, cur, warm] = [r.Exercise, rvLabel(r), rvDur(r) || 0, r.Type === 'Warm-up'];
+    } else {
+      const it = S.current && S.current.items[M.k];
+      const s = it && it.sets[M.i];
+      if (!s) return '';
+      [name, label, cur, warm] = [it.name, setLabel(M.k, M.i), setSecs(s), s.warm];
+    }
+    const usual = warm ? null : usualSetTime(name);
+    return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+      <h2 id="mt">Fix Set Time</h2>
+      <p class="muted small">${esc(name)} ${esc(label)} · logged as ${clock(cur)}</p>
+      <input id="time-input" class="time-input" value="${clock(cur)}" inputmode="decimal" autocomplete="off" aria-label="Set time, minutes and seconds">
+      <p class="muted small">Type 45 for 0:45, or 130 for 1:30.</p>
+      <p id="time-err" class="err-text" role="alert"></p>
+      <button class="btn primary wide" data-action="time-save">Save</button>
+      ${usual ? `<button class="btn wide" data-action="time-save" data-sec="${usual}">Use Your Usual ${clock(usual)}</button>` : ''}
+      <button class="btn wide" data-action="modal-close">Cancel</button>
+      <p class="muted small">Longer means you tapped Start late: the set starts earlier and the rest before it shrinks. Shorter means you tapped End late: the set ends earlier and the rest after it grows.</p>
+    </div></div>`;
+  }
+  function openTimeModal(m) {
+    S.modal = Object.assign({ type: 'time' }, m);
+    render();
+    const el = $('#time-input');
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }
+
   function rvReadGroup(g) {
     const def = exDef(g.name);
     let h = `<section class="panel"><h2>${esc(g.name)}</h2>${g.variation ? `<div class="muted small rv-var">${esc(g.variation)}</div>` : ''}`;
@@ -1552,9 +1680,12 @@
       const reps = num(r.Reps);
       const p = num(r.Partials);
       const txt = `${w ? w + ' × ' : ''}${reps == null ? '–' : reps}${p ? ` +${p}p` : ''}`;
-      const rest = !isDropRow(r) && num(r['Rest (s)']) ? `rest ${clock(num(r['Rest (s)']))}` : '';
+      const dur = isDropRow(r) ? null : rvDur(r);
+      const meta = [dur != null && toSec(r.End) != null ? `set ${clock(dur)}` : '', !isDropRow(r) && num(r['Rest (s)']) ? `rest ${clock(num(r['Rest (s)']))}` : '']
+        .filter(Boolean)
+        .join(' · ');
       const label = isDropRow(r) ? '<span class="drop-mark">↳</span>' : `<span class="set-no">${esc(rvLabel(r))}</span>`;
-      h += `<div class="rv-row${r.Type === 'Warm-up' ? ' warm' : ''}">${label}<span>${esc(txt)}</span><span class="muted small">${rest}</span></div>`;
+      h += `<div class="rv-row${r.Type === 'Warm-up' ? ' warm' : ''}">${label}<span>${esc(txt)}</span><span class="muted small">${meta}</span></div>`;
     });
     return h + '</section>';
   }
@@ -1588,11 +1719,19 @@
       h += `<div class="rv-edit ${grid}${isDraft(r) ? ' draft' : ''}${r.Type === 'Warm-up' ? ' warm' : ''}">${label}${
         weighted ? box('kg', 'decimal', 'kg') : `<span class="rv-mode">${esc(weightLabel({ kg: null, variation: r.Variation || '' }, def))}</span>`
       }${box('Reps', 'numeric', 'reps')}${parts ? box('Partials', 'numeric', 'partial reps') : ''}<button class="drop-x" data-action="rv-del" ${a} aria-label="Delete ${esc(rvLabel(r))}">✕</button></div>`;
-      // "+ Drop" after the last row of each working set, for a drop you forgot to log.
+      // Under each set: its times (tap to fix) and "+ Drop" for a drop you forgot to log.
       const next = g.rows[n + 1];
-      if (!def.bodyweight && r.Type !== 'Warm-up' && !(next && sameSet(next, r))) {
-        const main = g.rows.find((x) => sameSet(x, r) && !isDropRow(x));
-        if (main) h += `<button class="link rv-add" data-action="rv-add-drop" data-id="${esc(main.ID)}">+ Drop</button>`;
+      const main = !(next && sameSet(next, r)) && g.rows.find((x) => sameSet(x, r) && !isDropRow(x));
+      if (main) {
+        const tools = [];
+        if (toSec(main.End) != null) {
+          const dur = rvDur(main) || 0;
+          const rest = num(main['Rest (s)']) != null ? ` · rest ${clock(num(main['Rest (s)']))}` : '';
+          const short = main.Type !== 'Warm-up' && dur < SHORT_SET;
+          tools.push(`<button class="link${short ? ' hot' : ''}" data-action="rv-time" data-id="${esc(main.ID)}">${short ? 'Forgot Start? Fix Time' : `set ${clock(dur)}${rest} ✎`}</button>`);
+        }
+        if (!def.bodyweight && main.Type !== 'Warm-up') tools.push(`<button class="link add" data-action="rv-add-drop" data-id="${esc(main.ID)}">+ Drop</button>`);
+        if (tools.length) h += `<div class="rv-tools">${tools.join('')}</div>`;
       }
     });
     h += `<button class="btn small rv-add-set" data-action="rv-add-set" data-key="${esc(g.key)}">+ Add Set</button>`;
@@ -1627,11 +1766,26 @@
     const base = S.pending.sessions[id] || S.history.sessions.find((r) => r.Session === id);
     if (!base) return;
     const sum = (col) => rows.reduce((a, r) => a + (num(r[col]) || 0), 0);
-    S.pending.sessions[id] = Object.assign({}, base, {
+    const patch = {
       Sets: rows.filter((r) => r.Type !== 'Warm-up' && r.Side !== 'R' && !isDropRow(r)).length,
       'Work (min)': Math.round(sum('Set (s)') / 6) / 10,
       'Rest (min)': Math.round(sum('Rest (s)') / 6) / 10,
-    });
+    };
+    // Start and end follow the first and last set (a fixed time can move them).
+    const starts = rows.map((r) => toSec(r.Start)).filter((x) => x != null);
+    const ends = rows.map((r) => toSec(r.End)).filter((x) => x != null);
+    if (starts.length && ends.length && Math.max(...ends) >= Math.min(...starts)) {
+      const a = Math.min(...starts);
+      const b = Math.max(...ends);
+      const secs = b - a;
+      Object.assign(patch, {
+        Start: fromSec(a),
+        End: fromSec(b),
+        Duration: `${Math.floor(secs / 3600)}:${pad(Math.floor((secs % 3600) / 60))}:${pad(secs % 60)}`,
+        'Length (min)': Math.max(1, Math.round(secs / 60)),
+      });
+    }
+    S.pending.sessions[id] = Object.assign({}, base, patch);
     S.pending.deleteSessions = S.pending.deleteSessions.filter((x) => x !== id);
     savePending();
   }
@@ -1717,12 +1871,11 @@
     const run = runningSet();
     if (run) {
       const it = c.items[run.k];
-      const tgt = targetText(run.k, run.i, true);
       const drops = isDropSet(run.k, run.s) ? run.s.drops.length : 0;
       const how = drops ? `<span class="st-beat">Straight Through ${drops} Drop${drops > 1 ? 's' : ''} · End After The Last · Reps After</span>` : '';
       return `<div id="status" class="status run">
         <div class="st-main"><span class="st-label">${run.s.warm ? 'Warm-Up' : drops ? 'Drop Set' : 'Set'} In Progress · ${esc(it.name)} ${setLabel(run.k, run.i)}</span>
-          <b id="st-time" class="st-big"></b>${how}${tgt ? `<span class="st-beat">Beat ${esc(tgt)}</span>` : ''}</div>
+          <b id="st-time" class="st-big"></b>${how}</div>
         <button class="btn solid" data-action="end-running">${drops ? 'End Drop Set' : 'End Set'}</button>
       </div>`;
     }
@@ -1844,21 +1997,10 @@
       ${canSave ? `<button class="btn wide" data-action="ro-save">Save This Order For Every ${esc(c.day)} Day</button>` : ''}`;
   }
 
-  function lastLine(k, prefix) {
-    const it = S.current.items[k];
-    const last = lastOf(k);
-    const label = prefix ? `${esc(it.name)}: ` : '';
-    if (!last) return prefix ? `${label}<span class="muted">no history yet</span>` : '';
-    const nos = it.sets.map((s, i) => (s.warm ? null : setNo(k, i))).filter((x) => x != null);
-    let entries = last.entries.filter((e) => nos.includes(e.set));
-    if (!entries.length) entries = last.entries;
-    return `${label}Last time (${esc(daysAgo(last.date))}): ${esc(summary(entries, exDef(it.name)))}`;
-  }
-
-  /** In a workout a note is only shown (edit it in the Exercises tab); with no note, nothing is shown. */
-  function workoutNote(name, compact) {
+  /** In a workout a note is only shown, once you open the exercise (edit it in the Exercises tab). */
+  function workoutNote(name) {
     const n = noteOf(name);
-    return n ? `<div class="note${compact ? ' compact' : ''}">${ICON.pin}<span>${esc(n)}</span></div>` : '';
+    return n ? `<div class="note">${ICON.pin}<span>${esc(n)}</span></div>` : '';
   }
   function noteEditor(name) {
     if (S.editingNote === name) {
@@ -1890,16 +2032,11 @@
         <span class="card-title">${sup ? '<span class="tag">Superset</span>' : ''}<span>${esc(names.join(' + '))}</span></span>
         <span class="count ${runningHere ? 'live' : total && done === total ? 'ok' : ''}">${runningHere ? 'Live' : `${done}/${total}`}</span>
       </button>`;
-    if (!open) {
-      const lines = b.keys.map((k) => lastLine(k, sup)).filter(Boolean).join('<br>');
-      const notes = [...new Set(names)].map((n) => workoutNote(n, true)).join('');
-      return `<section class="card" id="b-${b.id}">${head}<div class="card-peek">${lines ? `<div class="last muted small">${lines}</div>` : ''}${notes}</div></section>`;
-    }
+    // A closed card is just its name; the note shows once you open the exercise.
+    if (!open) return `<section class="card" id="b-${b.id}">${head}</section>`;
     let body = S.settings.partials ? partialToggles(b) : '';
     body += [...new Set(names)].map((n) => (sup && noteOf(n) ? `<div class="sub-name">${esc(n)}</div>` : '') + workoutNote(n)).join('');
     b.keys.forEach((k) => (body += choiceSelects(k, sup)));
-    const lines = b.keys.map((k) => lastLine(k, sup) || '<span class="muted">No history yet</span>').join('<br>');
-    body += `<div class="last small">${lines}</div>`;
     if (S.pairing === b.id) body += pairPickerHtml(b);
     if (sup) {
       if (b.keys.some((k) => warmRows(c.items[k]))) body += '<div class="round-label muted small">Warm-Up</div>';
@@ -2064,11 +2201,6 @@
     </div>`;
   }
 
-  function isNextSet(k, i) {
-    const sets = S.current.items[k].sets;
-    if (sets.some((s) => s.start && !s.end)) return false;
-    return sets.findIndex((s) => !s.warm && !s.start && !s.end) === i;
-  }
   /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
   function footerHtml(k, i, label) {
     const it = S.current.items[k];
@@ -2082,14 +2214,11 @@
       if (m) inner += `<span class="mk ${m.dir > 0 ? 'up' : m.dir < 0 ? 'down' : 'same'}">${m.dir > 0 ? '▲' : m.dir < 0 ? '▼' : '='} ${esc(m.text)}</span>`;
     }
     if (s.end) {
-      const bits = [];
-      if (s.start) bits.push(`set ${clock((new Date(s.end) - new Date(s.start)) / 1000)}`);
-      if (s.rest != null) bits.push(`rest ${clock(s.rest)}`);
-      if (bits.length) inner += `<span class="muted">${bits.join(' · ')}</span>`;
-    }
-    if (!s.end && !s.warm && (s.start || isNextSet(k, i))) {
-      const t = targetText(k, i);
-      if (t) inner += `<span class="target">${esc(t)}</span>`;
+      // Set and rest times; tap to fix them (forgot to tap Start, or End).
+      const dur = setSecs(s);
+      const rest = s.rest != null ? ` · rest ${clock(s.rest)}` : '';
+      if (!s.warm && dur < SHORT_SET) inner += `<button class="drop-add" data-action="time-edit" ${a}>Forgot Start? Fix Time</button>`;
+      else inner += `<button class="link time-link" data-action="time-edit" ${a}>set ${clock(dur)}${rest} ✎</button>`;
     }
     if (s.warm) {
       if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ Remove Warm-Up</button>`;
@@ -2560,6 +2689,25 @@
     },
     'rv-add-drop'(el) {
       rvAddDrop(el.dataset.id);
+    },
+    'rv-time'(el) {
+      openTimeModal({ id: el.dataset.id });
+    },
+    'time-edit'(el) {
+      openTimeModal({ k: el.dataset.k, i: +el.dataset.i });
+    },
+    'time-save'(el) {
+      const sec = el.dataset.sec ? +el.dataset.sec : parseDur($('#time-input').value);
+      if (sec == null || sec < 1 || sec > 3600) {
+        $('#time-err').textContent = 'Enter a time up to 60 minutes, like 45 or 1:30.';
+        return;
+      }
+      const M = S.modal;
+      S.modal = null;
+      if (M.id) rvFixTime(M.id, sec);
+      else fixSetTime(M.k, M.i, sec);
+      toast('Set Time Fixed');
+      render();
     },
     'rv-add-set'(el) {
       rvAddSet(el.dataset.key);
