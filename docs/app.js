@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '4.0.0';
+  const VERSION = '4.1.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -20,7 +20,7 @@
   // Old names in your history are read as the new ones, so "last time" and PRs carry over.
   const NAME_ALIAS = {
     'Pull-up': 'Pull-Up', 'Chin-up': 'Chin-Up', Triceps: 'Tricep', 'Tricep Overhead Extension': 'Tricep',
-    'Incline Bench': 'Incline Smith Bench', 'Pec Deck': 'Pec Deck Fly',
+    'Incline Bench': 'Smith Bench', 'Incline Smith Bench': 'Smith Bench', 'Pec Deck': 'Pec Deck Fly',
   };
   const CORE_ALIAS = { 'Ab Raise': 'Ab Raise', 'Ab Crunch': 'Ab Crunch' };
   const VAR_ALIAS = {
@@ -38,8 +38,17 @@
       'Double Cable · V-Bar': 'Overhead Extension · V Bar',
     },
   };
-  // Exercises renamed in place: [old name, new name, the new default choices].
-  const RENAMED = [['Tricep Overhead Extension', 'Tricep', { Setup: 'Overhead Extension', Attachment: 'Single Rope' }]];
+  // Exercises renamed in place: [old name, new name, the new default choices]. History under the old
+  // name reads as the new one with its first choice of each type (Incline Smith Bench sets were 15°).
+  const RENAMED = [
+    ['Tricep Overhead Extension', 'Tricep', { Setup: 'Overhead Extension', Attachment: 'Single Rope' }],
+    ['Incline Smith Bench', 'Smith Bench', { Angle: '15°' }],
+  ];
+  // One-time changes to the Workout Setup kept on each device, each applied once (ids kept in the library).
+  const SETUP_CHANGES = {
+    // Dumbbell Pullover left the Push program (it's still an exercise you can add).
+    'push-no-pullover': (lib) => (lib.days.Push = (lib.days.Push || []).filter((it) => (it.names || []).join() !== 'Dumbbell Pullover')),
+  };
 
   const ICON = {
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -185,6 +194,12 @@
     recentAll: false,
   };
   if (typeof S.settings.sound !== 'string') S.settings.sound = S.settings.sound ? 'bleep' : 'off';
+  // A rep range set for an exercise under its old name moves to the new one.
+  RENAMED.forEach(([from, to]) => {
+    const rr = S.settings.repRanges || (S.settings.repRanges = {});
+    if (rr[from] && !rr[to]) rr[to] = rr[from];
+    delete rr[from];
+  });
   // Rest is set per exercise in Workout Setup; these are only the fallbacks.
   S.settings.restSec = 120;
   S.settings.warmRest = 60;
@@ -215,10 +230,24 @@
       lib.exercises = lib.exercises.map(normalizeEx);
       const have = new Set(lib.exercises.map((e) => e.name));
       DEF.exercises.forEach((e) => !have.has(e.name) && lib.exercises.push(normalizeEx(e)));
+      // New choices in a picker (e.g. Barbell for Shoulder Press) are added to your copy, after your own.
+      DEF.exercises.map(normalizeEx).forEach((d) => {
+        const mine = lib.exercises.find((e) => e.name === d.name);
+        (d.options || []).forEach((g) => {
+          const mg = mine && (mine.options || []).find((x) => x.label === g.label);
+          if (mg) g.choices.forEach((c) => !mg.choices.some((x) => x.name === c.name) && mg.choices.push(clone(c)));
+        });
+      });
       DAYS.forEach((d) => {
         if (!Array.isArray(lib.days[d])) lib.days[d] = clone(DEF.days[d] || []);
       });
     }
+    lib.changes = lib.changes || [];
+    Object.keys(SETUP_CHANGES).forEach((id) => {
+      if (lib.changes.includes(id)) return;
+      SETUP_CHANGES[id](lib);
+      lib.changes.push(id);
+    });
     // "Drop Set On Last Set" was retired: drops can now be added to any active set.
     DAYS.forEach((d) => (lib.days[d] || []).forEach((it) => it.style === 'dropLast' && delete it.style));
     // Ultimate drop sets now always go down to 2.5 kg, so the per-set lowest weights are gone.
@@ -827,45 +856,43 @@
     if (lo > hi) [lo, hi] = [hi, lo];
     return { lo, hi, own: !!own };
   }
-  /** How much weaker you are pre-fatigued than fresh, across your exercises (the middle one), else 0.9. */
+  // Every type of an exercise (Weight Stack or Plate Loaded, 15° or 45°, Smith or Dumbbell…) is its
+  // own track: its own strength, suggestions, learned numbers and progress chart. Only the
+  // set-to-set drop-off, which has no units, is shared across an exercise's types as a starting point.
+  /** Pre-fatigued against fresh on one exercise type, from your last 4 workouts each way: { own, n } or null. */
+  function trackRatio(name, variation) {
+    const def = exDef(name);
+    if (def.bodyweight) return null;
+    const hs = historyFor(name, variation);
+    const top = (f) => hs.filter((h) => h.fatigued === f).slice(0, 4).map((h) => score(h.entries, def).value).filter((v) => v > 0);
+    const fresh = top(false);
+    const tired = top(true);
+    if (!fresh.length || !tired.length) return null;
+    return { own: Math.min(1, Math.max(0.7, midOf(tired) / midOf(fresh))), n: Math.min(fresh.length, tired.length) };
+  }
+  /** How much weaker you are pre-fatigued than fresh, across your exercise types (the middle one), else 0.9. */
   function fatigueRatio() {
     if (memoHist.has('fatigueRatio')) return memoHist.get('fatigueRatio');
     const ratios = [];
-    [...new Set(allSets().map((r) => r.Exercise))]
-      .filter((n) => !exDef(n).bodyweight)
-      .forEach((name) => {
-        const def = exDef(name);
-        const hs = historyFor(name, '');
-        const top = (f) => hs.filter((h) => h.fatigued === f).map((h) => score(h.entries, def).value).filter((v) => v > 0);
-        const fresh = top(false);
-        const tired = top(true);
-        if (fresh.length && tired.length) ratios.push(midOf(tired) / midOf(fresh));
-      });
+    new Set(allSets().filter((r) => r.Type !== 'Warm-up').map((r) => `${r.Exercise}\n${r.Variation || ''}`)).forEach((t) => {
+      const [name, v] = t.split('\n');
+      const x = trackRatio(name, v);
+      if (x) ratios.push(x.own);
+    });
     const r = ratios.length ? Math.min(1, Math.max(0.75, midOf(ratios))) : 0.9;
     memoHist.set('fatigueRatio', r);
     return r;
   }
   /**
-   * The same for one exercise: its own ratio from your last few workouts each way, weighed against the
-   * one across your exercises (worth 2 workouts), so a couple of odd days don't swing it. { r, own }
+   * The same for one exercise type: its own ratio, weighed against the one across your exercises
+   * (worth 2 workouts), so a couple of odd days don't swing it. { r, own }
    */
-  function stateRatio(name) {
-    const key = `ratio|${name}`;
+  function stateRatio(name, variation) {
+    const key = `ratio|${name}|${variation || ''}`;
     if (memoHist.has(key)) return memoHist.get(key);
     const g = fatigueRatio();
-    const def = exDef(name);
-    let out = { r: g, own: false };
-    if (!def.bodyweight) {
-      const hs = historyFor(name, '');
-      const top = (f) => hs.filter((h) => h.fatigued === f).slice(0, 4).map((h) => score(h.entries, def).value).filter((v) => v > 0);
-      const fresh = top(false);
-      const tired = top(true);
-      if (fresh.length && tired.length) {
-        const n = Math.min(fresh.length, tired.length);
-        const own = Math.min(1, Math.max(0.7, midOf(tired) / midOf(fresh)));
-        out = { r: (own * n + g * 2) / (n + 2), own: true };
-      }
-    }
+    const x = trackRatio(name, variation);
+    const out = x ? { r: (x.own * x.n + g * 2) / (x.n + 2), own: true } : { r: g, own: false };
     memoHist.set(key, out);
     return out;
   }
@@ -914,8 +941,7 @@
     if (memoHist.has(key)) return memoHist.get(key);
     const weights = (v) =>
       [...new Set(allSets().filter((r) => r.Exercise === name && (!v || r.Variation === v) && num(r.kg) > 0).map((r) => num(r.kg)))].sort((a, b) => a - b);
-    let ws = weights(variation);
-    if (ws.length < 3 && variation) ws = weights('');
+    const ws = weights(variation);
     const count = new Map();
     ws.slice(1).forEach((w, n) => {
       const g = Math.round((w - ws[n]) * 4) / 4;
@@ -962,7 +988,7 @@
     let factor = 1;
     if (conv) {
       pts = take(hs);
-      const r = stateRatio(name).r;
+      const r = stateRatio(name, variation).r;
       factor = fatigued ? r : 1 / r;
     }
     let out = null;
@@ -1556,6 +1582,20 @@
     }
   }
 
+  /**
+   * Sets in your sheet still under a renamed exercise (e.g. Incline Smith Bench) are saved back under
+   * today's name and type (Smith Bench · 15°), so the sheet and Excel match the app. Runs after each
+   * history load; once they're renamed there's nothing left to do.
+   */
+  function tidyOldNames() {
+    const rows = S.history.sets
+      .filter((r) => NAME_ALIAS[r.Exercise] && !S.pending.sets[r.ID] && !S.pending.deleteSets.includes(r.ID))
+      .map((r) => Object.assign({}, normalizeRow(r)));
+    if (!rows.length) return;
+    queueRows(rows);
+    scheduleSync();
+  }
+
   let lastFetch = 0;
   let fetching = false;
   async function refreshHistory(force) {
@@ -1574,6 +1614,7 @@
       lastFetch = Date.now();
       idb.set('history', S.history).catch(() => {});
       invalidate();
+      tidyOldNames();
       if (S.sync === 'auth') setSync('idle');
       if (!isTyping()) render();
     } catch (e) {
@@ -2851,7 +2892,7 @@
       const rows = line(false) + line(true);
       if (rows) {
         const dec = setDecay(name, v);
-        const sr = stateRatio(name);
+        const sr = stateRatio(name, v);
         const pct = (x) => Math.max(0, Math.round((1 - x) * 100));
         h += `<h3>Next Time, Set 1${v ? ` · ${esc(v)}` : ''}</h3><ul class="records">${rows}</ul>
           <p class="muted small">Each set after the first: about ${pct(dec.d)}% weaker${dec.n ? ` (from ${dec.n} pairs of back-to-back sets)` : ' (a starting guess until you log more)'}. Pre-fatigued: about ${pct(sr.r)}% weaker than fresh${sr.own ? '' : ' (across your exercises)'}. Weights move in ${fmt(step)} kg steps.</p>`;
@@ -2874,12 +2915,16 @@
       ${recent.length ? `<optgroup label="Recently Trained">${recent.slice(0, 12).map(opt).join('')}</optgroup>` : ''}
       <optgroup label="All Exercises">${all.filter((n) => !recent.slice(0, 12).includes(n)).map(opt).join('')}</optgroup></select>`;
     h += `<section class="panel"><h2>Notes</h2>${noteEditor(P.name)}<p class="muted small">Notes show on the exercise during workouts.</p></section>`;
+    // One type at a time (the one you did last, unless you pick another): a weight-stack and a
+    // plate-loaded press, or two bench angles, aren't the same strength, so they're never mixed.
     const vs = [...new Set(historyFor(P.name, '').flatMap((s) => s.entries.map((e) => e.variation)).filter(Boolean))];
-    if (!def.bodyweight && vs.length > 1) {
-      if (!vs.includes(P.variation)) P.variation = '';
-      h += `<div class="chips">${['', ...vs]
-        .map((v) => `<button class="chip ${v === P.variation ? 'on' : ''}" data-action="pv" data-v="${esc(v)}">${v ? esc(v) : 'All'}</button>`)
-        .join('')}</div>`;
+    if (!def.bodyweight && vs.length) {
+      if (!vs.includes(P.variation)) P.variation = vs[0];
+      if (vs.length > 1) {
+        h += `<div class="chips">${vs
+          .map((v) => `<button class="chip ${v === P.variation ? 'on' : ''}" data-action="pv" data-v="${esc(v)}">${esc(v)}</button>`)
+          .join('')}</div>`;
+      }
     } else {
       P.variation = '';
     }
@@ -2901,9 +2946,7 @@
       ${chartSvg(pts)}
       ${both ? '<div class="legend"><span><i class="key"></i>Fresh</span><span><i class="key tired"></i>Pre-fatigued (after 2+ sets for the same muscles)</span></div>' : ''}
       <p class="muted small">${esc(pts[0].hint)} The trend is the straight-line fit through your last 8 weeks.</p></section>`;
-    // Suggestions go by one type at a time: the one picked above, else the one you did last.
-    const vNext = hasOptions(def) ? P.variation || (sessions[0].entries[0] && sessions[0].entries[0].variation) || '' : '';
-    h += suggestPanel(P.name, def, vNext);
+    h += suggestPanel(P.name, def, P.variation);
     h += recordsHtml(sessions, def);
     h += `<h2>History</h2><ul class="list">${sessions
       .map((s) => {

@@ -21,7 +21,7 @@
 // come from your past workouts in the same state. Exercises not listed only count themselves.
 window.TT_MUSCLES = {
   'Machine Press': ['Chest', 'Triceps', 'Front Delts'],
-  'Incline Smith Bench': ['Chest', 'Front Delts', 'Triceps'],
+  'Smith Bench': ['Chest', 'Front Delts', 'Triceps'],
   'Core Exercise': ['Abs'],
   'Landmine Press': ['Front Delts', 'Chest', 'Triceps'],
   'Pec Deck Fly': ['Chest'],
@@ -48,11 +48,11 @@ window.TT_DEFAULTS = {
   version: 4,
   exercises: [
     { name: 'Machine Press', options: [{ label: 'Machine', choices: ['Weight Stack', 'Plate Loaded'] }] },
-    { name: 'Incline Smith Bench' },
+    { name: 'Smith Bench', options: [{ label: 'Angle', choices: ['15°', '30°', '45°', 'Flat'] }] },
     { name: 'Core Exercise', options: [{ label: 'Exercise', choices: ['Ab Raise', 'Ab Crunch', 'Pallof Press'] }] },
     { name: 'Landmine Press', oneArm: true, kgLabel: '+Kg', options: [{ label: 'Band', choices: ['Red Band', 'No Band'] }] },
     { name: 'Pec Deck Fly' },
-    { name: 'Shoulder Press', options: [{ label: 'Type', choices: ['Smith', 'Dumbbell'] }] },
+    { name: 'Shoulder Press', options: [{ label: 'Type', choices: ['Smith', 'Dumbbell', 'Barbell'] }] },
     { name: 'Dumbbell Pullover' },
     {
       name: 'Tricep',
@@ -94,12 +94,11 @@ window.TT_DEFAULTS = {
   days: {
     Push: [
       { names: ['Machine Press'], sets: 5, warmups: 1, rest: 120, choices: { 'Machine Press': { Machine: 'Weight Stack' } } },
-      { names: ['Incline Smith Bench'], sets: 5, warmups: 1, rest: 120 },
+      { names: ['Smith Bench'], sets: 5, warmups: 1, rest: 120, choices: { 'Smith Bench': { Angle: '15°' } } },
       { names: ['Core Exercise'], sets: 3, rest: 90, choices: { 'Core Exercise': { Exercise: 'Ab Raise' } } },
       { names: ['Landmine Press'], sets: 3, rest: 60, choices: { 'Landmine Press': { Band: 'Red Band' } } },
       { names: ['Pec Deck Fly'], sets: 5, warmups: 1, rest: 120 },
       { names: ['Shoulder Press'], sets: 8, rest: 90 },
-      { names: ['Dumbbell Pullover'], sets: 5, rest: 90 },
       {
         names: ['Tricep'],
         sets: 2,

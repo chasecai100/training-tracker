@@ -60,12 +60,11 @@ A web app for your iPhone and PC.
 | Day | Exercise | Sets | Rest | Setup |
 |---|---|---|---|---|
 | Push | Machine Press | 5 | 2:00 | 1 warm-up · Weight Stack / Plate Loaded |
-| | Incline Smith Bench | 5 | 2:00 | 1 warm-up |
+| | Smith Bench | 5 | 2:00 | 1 warm-up · Angle 15° (or 30°, 45°, Flat) |
 | | Core Exercise | 3 | 1:30 | Ab Raise (or Ab Crunch, Pallof Press) |
 | | Landmine Press | 3 | 1:00 | Red band + added kg · each side timed alone |
 | | Pec Deck Fly | 5 | 2:00 | 1 warm-up |
-| | Shoulder Press | 8 | 1:30 | Smith / Dumbbell |
-| | Dumbbell Pullover | 5 | 1:30 | |
+| | Shoulder Press | 8 | 1:30 | Smith / Dumbbell / Barbell |
 | | Tricep | 2 | 2:00 | Overhead Extension / Pushdown · Single Rope / Double Cable / V Bar · ultimate drop set (2.5 kg steps down to 2.5 kg) |
 | Pull | Pull-Up + Chin-Up superset | 5 rounds | 1:00 between, 2:00 after | BW sets 1–2, purple band sets 3–5 · full and partial reps |
 | | Seated Row | 5 | 2:00 | Wide MAG Grip (or Close MAG, Medium MAG, V Grip) |
@@ -92,6 +91,8 @@ A web app for your iPhone and PC.
 ## Rules the app follows
 
 - **Weights:** always kg; for dumbbells, the weight of one dumbbell. Landmine Press logs the added weight on top of the bar.
+- **Each type is its own exercise for progress:** Machine Press on the weight stack and plate loaded, Smith Bench at 15° and 45°, or Shoulder Press with a Smith machine or dumbbells aren't the same strength. Each type (the Variation column) therefore gets its own suggestions, learned numbers, chart, bests and history. The Exercises tab shows one type at a time, defaulting to the one you did last. A type you've never done gets no suggestion. In Excel, group by Exercise and Variation together.
+- **Renamed exercises:** sets in the sheet under an old name (Incline Smith Bench) are saved back under the new name and type (Smith Bench · 15°) the next time the app loads your history, so the sheet and Excel match.
 - **Each side timed alone:** one-sided exercises get one row per side (1L, 1R, 2L…), each with its own Start/End and rest. In the sheet, both sides share the set number, with Side L or R.
 - **Warm-ups:** feeler sets, not to failure. They're tagged Type = Warm-up and kept out of progress, suggestions, set numbering and Excel's 1-rep max and volume.
 - **Set styles:**
@@ -107,7 +108,7 @@ A web app for your iPhone and PC.
 - **Fresh or pre-fatigued:** order changes what you can lift, so each exercise in each workout gets a state.
   - It's **pre-fatigued** when 2 or more working sets earlier in that workout hit any of its muscles (muscle tags are in `exercises.js`); otherwise it's **fresh**.
   - The state comes from set start times, so no extra Sheet columns are needed.
-  - Incline after Machine Press counts as pre-fatigued; Incline after Leg Press counts as fresh.
+  - Smith Bench after Machine Press counts as pre-fatigued; Smith Bench after Leg Press counts as fresh.
 - **Progress, like for like:**
   - The Exercises chart draws fresh and pre-fatigued workouts as separate lines, each with its trend: the straight-line fit over the last 8 weeks, e.g. "Fresh +6% since Oct 3".
   - History rows are tagged fresh or pre-fatigued.
