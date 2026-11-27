@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '4.1.0';
+  const VERSION = '4.1.1';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -839,15 +839,23 @@
   const STALE_AFTER = 21; // days off before the suggestion eases off, 1% a week, up to 8%
   // The weight strength is worked out on: what's on the machine; with added weight on a bodyweight
   // exercise, your body weight plus it (70 kg until you add yours in Settings); Landmine Press logs the
-  // plates only, so about 10 kg is added for the bar's share.
-  const BAR_SHARE = 10;
+  // plates only, so about 20 kg is added for the bar and band (your sets show a 2.5 kg plate barely
+  // changes the reps, so the bar's share is big).
+  const BAR_SHARE = 20;
   function loadOf(def, kg) {
     if (kg == null) return null;
     if (def.bodyweight) return (Number(S.settings.bodyKg) > 0 ? Number(S.settings.bodyKg) : 70) + kg;
     if (def.kgLabel) return BAR_SHARE + kg;
     return kg;
   }
-  const REP_RANGES = ['5-8', '6-10', '8-12', '10-12', '10-15', '12-15', '15-20', '20-30'];
+  // On added-weight exercises (Landmine Press) a blank weight means no plates, just the bar: 0 kg added.
+  const liftKg = (def, kg) => (num(kg) == null && def.kgLabel ? 0 : num(kg));
+  const usableKg = (def, kg) => kg > 0 || (!!def.kgLabel && kg === 0);
+  /** Rep counts to pick a range's ends from (3 to 30). */
+  const repOptions = (cur) =>
+    Array.from({ length: 28 }, (_, n) => n + 3)
+      .map((n) => `<option value="${n}" ${n === cur ? 'selected' : ''}>${n}</option>`)
+      .join('');
   /** Your rep range for an exercise: its own (Exercises tab), else the one in Settings (12–15). */
   function repRange(name) {
     const own = /^(\d+)-(\d+)$/.exec((S.settings.repRanges || {})[name] || '');
@@ -918,9 +926,10 @@
         ].forEach(([ka, ra, kb, rb]) => {
           if (!(ra > 0) || !(rb > 0)) return;
           let r;
+          [ka, kb] = [liftKg(def, ka), liftKg(def, kb)];
           // Same weight (or bodyweight): the reps alone say it. Else compare the estimated maxes.
           if (ka === kb) r = (1 + rb / 30) / (1 + ra / 30);
-          else if (ka > 0 && kb > 0) r = e1rm(loadOf(def, kb), rb) / e1rm(loadOf(def, ka), ra);
+          else if (usableKg(def, ka) && usableKg(def, kb)) r = e1rm(loadOf(def, kb), rb) / e1rm(loadOf(def, ka), ra);
           else return;
           if (r >= 0.75 && r <= 1.1) ratios.push(r);
         });
@@ -977,9 +986,9 @@
       const es = h.entries.filter((e) => !def.bodyweight || e.variation === 'Weighted');
       if (!es.length) return null;
       const e = es.find((x) => x.set === no) || es.reduce((a, b) => (Math.abs(b.set - no) < Math.abs(a.set - no) ? b : a));
-      const kg = side === 'R' ? (e.kgR != null ? e.kgR : e.kg) : e.kg;
+      const kg = liftKg(def, side === 'R' ? (e.kgR != null ? e.kgR : e.kg) : e.kg);
       const reps = side === 'R' ? e.repsR : e.reps;
-      if (!(kg > 0) || !(reps > 0)) return null;
+      if (!usableKg(def, kg) || !(reps > 0)) return null;
       return { kg, reps, date: h.date, E: e1rm(loadOf(def, kg), reps) * decay ** (no - e.set) };
     };
     const take = (list) => list.map(pick).filter(Boolean).slice(0, 4);
@@ -1020,7 +1029,8 @@
    *   over it, up to the heaviest weight that gets you near the top (14 for 12–15), so the new
    *   weight lasts a couple of sets as you tire.
    * Under the range, either way, down only as far as it takes to get back in (the heaviest weight
-   * that gets you to the bottom). A weight up that would put you more than a rep under the range
+   * that gets you to the bottom), unless that lands you further over the range than you'd be under
+   * it by staying. A weight up that would put you more than a rep under the range
    * waits: add reps first. Returns { kg, reps, r0 (the reps you'd get at the anchor) }.
    */
   function chooseKg(def, step, E, anchor, progress, range) {
@@ -1044,9 +1054,12 @@
       const pick = fit.length ? fit[fit.length - 1] : inRange.length ? inRange[inRange.length - 1] : progress && cands.length && at(cands[0]) >= range.lo - 1 ? cands[0] : null;
       return pick != null ? res(pick, at(pick)) : res(anchor, r0 + (progress ? 1 : 0));
     }
-    if (fit.length) return res(fit[0], at(fit[0]));
-    if (cands.length) return res(cands[cands.length - 1], at(cands[cands.length - 1]));
-    return res(anchor, r0);
+    const down = fit.length ? fit[0] : cands.length ? cands[cands.length - 1] : null;
+    // On a light weight one step can be a big jump: if going down would leave you further over the
+    // range than staying leaves you under it (15 kg for 11 vs 12.5 kg for 19), stay.
+    const off = (r) => (r < range.lo ? range.lo - r : r > range.hi ? r - range.hi : 0);
+    if (down == null || off(at(down)) >= off(r0)) return res(anchor, r0 + (progress && r0 + 1 <= range.hi ? 1 : 0));
+    return res(down, at(down));
   }
 
   /**
@@ -1085,15 +1098,15 @@
     let anchor = null;
     let src = '';
     if (x) {
-      const xkg = num(x.kg) != null ? num(x.kg) : pp ? pp.kg : null;
+      const xkg = num(x.kg) != null ? num(x.kg) : pp ? pp.kg : x.end ? liftKg(def, null) : null;
       const xr = num(x.reps);
-      if (x.end && xr > 0 && xkg > 0) {
+      if (x.end && xr > 0 && usableKg(def, xkg)) {
         E = e1rm(loadOf(def, xkg), xr) * decay ** pr.gap;
         src = 'today';
       } else if (pp && pp.src === 'today' && pp.E) {
         E = pp.E * decay ** pr.gap;
         src = 'today';
-      } else if (x.end && xkg > 0) src = 'carry';
+      } else if (x.end && usableKg(def, xkg)) src = 'carry';
       if (src) anchor = xkg;
     }
     const h = src === 'today' ? null : histStrength(it.name, vf, setNo(k, i), s.side || '', liveFatigued(k));
@@ -1105,7 +1118,7 @@
     }
     Object.assign(out, { E, src });
     const own = num(s.kg);
-    if (own > 0) {
+    if (own != null && usableKg(def, own)) {
       // You've picked the weight: the reps you'd get with it.
       out.kg = own;
       if (E) out.reps = Math.max(1, Math.round(repsAt(E, loadOf(def, own))));
@@ -2873,13 +2886,17 @@
    */
   function suggestPanel(name, def, v) {
     const range = repRange(name);
-    const own = (S.settings.repRanges || {})[name] || '';
-    const opts = REP_RANGES.concat(own && !REP_RANGES.includes(own) ? [own] : []);
     const dflt = `${+S.settings.repMin || 12}–${+S.settings.repMax || 15}`;
+    // Its own bottom and top, any numbers; until you change them it follows the default in Settings.
+    const end = (e, aria) =>
+      `<select data-reprange="${esc(name)}" data-end="${e}" aria-label="${aria} for ${esc(name)}">${repOptions(range[e])}</select>`;
     let h = `<section class="panel"><h2>Suggestions</h2>
-      <label class="setup-row"><span>Rep Range</span><select data-reprange="${esc(name)}" aria-label="Rep range for ${esc(name)}">
-        <option value="">Default (${dflt})</option>${opts.map((o) => `<option value="${o}" ${o === own ? 'selected' : ''}>${o.replace('-', '–')}</option>`).join('')}
-      </select></label>`;
+      <div class="setup-row"><span>Rep Range</span><span class="range-pick">${end('lo', 'Fewest reps')}<span>to</span>${end('hi', 'Most reps')}</span></div>
+      <p class="muted small">${
+        range.own
+          ? `Its own range. <button class="link" data-action="reprange-default" data-name="${esc(name)}">Use Default (${dflt})</button>`
+          : `Your default from Settings. Change either end to give ${esc(name)} its own.`
+      }</p>`;
     if (!def.bodyweight) {
       const step = kgStep(name, v);
       const plus = def.kgLabel ? '+' : '';
@@ -3033,10 +3050,7 @@
     </div></div>`;
     return h;
   }
-  const repSelect = (key, aria) =>
-    `<select data-setting="${key}" aria-label="${aria}">${Array.from({ length: 28 }, (_, n) => n + 3)
-      .map((n) => `<option value="${n}" ${+S.settings[key] === n ? 'selected' : ''}>${n}</option>`)
-      .join('')}</select>`;
+  const repSelect = (key, aria) => `<select data-setting="${key}" aria-label="${aria}">${repOptions(+S.settings[key])}</select>`;
   function settingsView() {
     const sounds = SOUNDS.map(
       ([v, t]) => `<div class="sound-row"><label class="check"><input type="radio" name="sound" data-setting-radio="sound" value="${v}" ${S.settings.sound === v ? 'checked' : ''}> ${t}</label>
@@ -3509,6 +3523,11 @@
       S.modal = null;
       render();
     },
+    'reprange-default'(el) {
+      delete (S.settings.repRanges || {})[el.dataset.name];
+      saveSettings();
+      render();
+    },
     'modal-close-back'(el, e) {
       if (e.target === el) ACTIONS['modal-close']();
     },
@@ -3751,9 +3770,19 @@
       if (key === 'keepAwake') keepAwake(!!S.current);
       if (key === 'supersets' || key === 'partials' || key === 'repMin' || key === 'repMax') render();
     } else if (el.dataset.reprange != null) {
+      // One end of an exercise's own rep range; moving one past the other takes it along.
+      const name = el.dataset.reprange;
       const own = S.settings.repRanges || (S.settings.repRanges = {});
-      if (el.value) own[el.dataset.reprange] = el.value;
-      else delete own[el.dataset.reprange];
+      const r = repRange(name);
+      let lo = el.dataset.end === 'lo' ? +el.value : r.lo;
+      let hi = el.dataset.end === 'hi' ? +el.value : r.hi;
+      if (lo > hi) {
+        if (el.dataset.end === 'lo') hi = lo;
+        else lo = hi;
+      }
+      // Set back to the default, it follows the default again.
+      if (lo === (+S.settings.repMin || 12) && hi === (+S.settings.repMax || 15)) delete own[name];
+      else own[name] = `${lo}-${hi}`;
       saveSettings();
       render();
     } else if (el.dataset.settingRadio) {

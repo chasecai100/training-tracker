@@ -44,14 +44,14 @@ A web app for your iPhone and PC.
      - **Fixed with one tap (Fix, or Fix All):** a set of a few seconds (Start tapped late), or one far longer than the exercise's other sets (End tapped late; over 2.5× and 2 minutes more). The set gets the middle of that exercise's other set times in the workout, else your usual time. A late Start never takes more than the rest before it.
      - **Only pointed out:** a working set with no reps, or a weight (2.5× off) or rep count (25+ and 3× the others) far from your other sets, a likely typo.
 3. **Exercises:** each exercise's note (edit it here), progress chart, Suggestions, records and history.
-   - **Suggestions:** the exercise's own rep range (or Default), what set 1 would suggest next time fresh and pre-fatigued, and what the app has learned: how much weaker each set gets than the one before, how much weaker you are pre-fatigued, and the weight step.
+   - **Suggestions:** the exercise's rep range, with its own bottom and top (it follows the default until you change either end; "Use Default" goes back), what set 1 would suggest next time fresh and pre-fatigued, and what the app has learned: how much weaker each set gets than the one before, how much weaker you are pre-fatigued, and the weight step.
 4. **Settings:**
    - **Timer And Sound:** default rest, rest after warm-ups, a choice of rest-over sound with test buttons, and keep the screen on.
    - **Options:**
     - **Supersets**, off by default: shows the "Superset With…" options.
     - **Partial Reps**, on by default: shows the Partial Reps switch on each exercise card. When it's off, partial reps are hidden everywhere.
     - **Body Weight (Kg):** used for estimated calories (MET method: about 6 METs while lifting, 2 between sets), and for weighted pull-up and chin-up suggestions (70 kg is assumed until it's set). Blank hides calories.
-   - **Weight Suggestions:** the default rep range, 12 to 15. Each exercise can have its own on the Exercises tab.
+   - **Weight Suggestions:** the default rep range, a bottom and a top (12 to 15). Each exercise can have its own bottom and top on the Exercises tab.
    - **Workout Setup:** every exercise on each day, with its own sets, warm-ups, rest, set style, default types, and bodyweight/band per set.
    - **New Exercise.**
 
@@ -114,12 +114,12 @@ A web app for your iPhone and PC.
   - History rows are tagged fresh or pre-fatigued.
   - All-time bests stay on the Exercises tab as a reference. There are no PR badges and no up/down markers.
 - **Suggested weights** (the hints in the weight and reps boxes). Everything runs on one estimate of your strength for the set: an estimated 1-rep max (Epley: weight × (1 + reps ÷ 30)), which puts any weight and reps on the same scale.
-  1. **Rep range:** 12–15 by default (Settings), or the exercise's own (Exercises tab).
+  1. **Rep range:** a bottom and top, 12–15 by default (Settings), or the exercise's own (Exercises tab).
   2. **Before you've done a set of the exercise today** (from your history): it uses your last 4 workouts with that exercise in today's state, for that set number.
      - The latest counts most, and each workout further back counts half as much. A good day counts in full; one bad day only pulls you down halfway.
      - More than 3 weeks since you last did it: it eases off 1% a week, up to 8%.
      - It's double progression: at last time's weight it aims for one more rep, until that reaches the top of your range. Then the weight goes up to the heaviest that still gets you one rep inside the range (13 for 12–15). If a step up would drop you more than a rep under the range, you add reps first.
-     - Under the range, the weight comes down only as far as it takes to get back in.
+     - Under the range, the weight comes down only as far as it takes to get back in, unless one step down would leave you further over the range than staying leaves you under it (15 kg for 11 beats 12.5 kg for 19).
   3. **During a workout:** each set follows the set you just did. That set's weight and reps give today's strength, less how much you usually drop off from one set to the next on that exercise.
      - The drop-off is learned from back-to-back sets in your last 10 workouts of it. It starts at 4% and settles as you log more.
      - The weight stays while the reps you'd get are still inside your range. Over it, the weight goes up to the heaviest that gets you near the top (14 for 12–15), so it lasts a couple of sets. Under it, it comes down only as far as it takes to get back in.
@@ -128,7 +128,7 @@ A web app for your iPhone and PC.
      - One-arm sets: the right side keeps the left side's weight within a set.
   4. **No workout in today's state yet:** it converts from the other state with your fresh-to-tired ratio for that exercise. That's learned from your last few workouts each way, weighed against the ratio across all your exercises (0.9 until there's data).
   5. **Limits:** a suggestion moves at most +15% or −20% from the weight it starts from (always at least one step). Weights move in your usual step for that exercise: the most common gap between weights you've logged, once it's come up twice; until then 2.5 kg.
-  6. **Added weight:** weighted pull-ups and chin-ups use your body weight plus the added weight. Landmine Press adds about 10 kg for the bar's share.
+  6. **Added weight:** weighted pull-ups and chin-ups use your body weight plus the added weight. Landmine Press adds about 20 kg for the bar and band, and a blank weight counts as bar only (0 kg added).
   7. **Bodyweight and band sets:** reps only, following the set before less your usual drop-off, else last time's.
   8. **Drop weights** keep their share of the set's weight when that changes.
 - **Notes:** one per exercise, stored in the sheet's Notes tab. Edit them in Exercises; a workout only shows them on an open exercise.
