@@ -17,7 +17,13 @@ A web app for your iPhone and PC.
 1. **Start:**
    - Push, Pull, Legs, Shoulders, or an empty workout.
    - Once a day has history, its card shows your average workout time.
-   - Below that is a list of recent workouts.
+   - Below that is a list of recent workouts (8, or Show All). Tap one to review it: working sets, kg volume, average rest, and every set, drop and warm-up by exercise.
+   - **Edit** on that page fixes logging mistakes:
+     - Change kg, reps or partials, or an exercise's grip or setup.
+     - Delete a set or drop (tap ✕ twice); later sets renumber to close the gap.
+     - Add a forgotten set or drop. It saves once you type into it.
+     - Delete the whole workout.
+     - Changes save as you type and sync like any set. "Last time", PRs, history and the workout's totals follow.
 2. **Workout:**
    - **Pinned top bar:** the total workout time, plus a big countdown to your next set. While a set is running, it shows the set timer and your "to beat" target instead.
    - **Set rows:** each row reads set number, then weight, then Start/End, then reps. Reps (and partials) unlock once you tap End.

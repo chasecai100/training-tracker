@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.5';
+  const VERSION = '3.6.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -179,6 +179,8 @@
     reorder: false,
     pairing: null,
     setupOpen: null,
+    review: null, // the past workout open on the Workout tab
+    recentAll: false,
   };
   if (typeof S.settings.sound !== 'string') S.settings.sound = S.settings.sound ? 'bleep' : 'off';
   // Rest is set per exercise in Workout Setup; these are only the fallbacks.
@@ -556,6 +558,7 @@
 
   function startWorkout(day) {
     const now = new Date();
+    S.review = null;
     S.current = {
       v: WORKOUT_V,
       session: `${ymd(now)}-${pad(now.getHours())}${pad(now.getMinutes())}`,
@@ -1386,7 +1389,7 @@
     if (!S.settings.pass) html = connectView();
     else if (S.tab === 'exercises') html = exercisesView();
     else if (S.tab === 'settings') html = settingsView();
-    else html = S.current ? workoutView() : startView();
+    else html = S.current ? workoutView() : S.review ? reviewView() : startView();
     app.innerHTML = html;
     const tabs = $('#tabs');
     tabs.hidden = !S.settings.pass;
@@ -1456,14 +1459,256 @@
         <span class="muted small">${lastByDay[d] ? 'Last ' + esc(daysAgo(lastByDay[d])) : 'Not done yet'}</span>
       </button>`;
     }).join('');
-    const recent = sessions.slice(0, 8).map(
-      (s) => `<li><div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}</span></div>
-        ${s.length || s.from ? `<div class="muted small">${[s.from && s.to ? `${s.from}–${s.to}` : s.from, s.length ? `${s.length} min` : ''].filter(Boolean).join(' · ')}</div>` : ''}</li>`
-    ).join('');
+    const recent = (S.recentAll ? sessions : sessions.slice(0, 8))
+      .map((s) => {
+        const meta = [s.from && s.to ? `${s.from}–${s.to}` : s.from, s.length ? `${s.length} min` : '', `${s.sets} set${s.sets === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+        return `<li class="tap"><button class="li-btn" data-action="rv-open" data-session="${esc(s.session)}">
+          <div class="li-main"><span>${esc(niceDate(s.date))}</span><span>${esc(s.day)}<span class="chev" aria-hidden="true">›</span></span></div>
+          <div class="muted small">${esc(meta)}</div></button></li>`;
+      })
+      .join('');
+    const more = sessions.length > 8 ? `<button class="link more" data-action="recent-all">${S.recentAll ? 'Show Fewer' : `Show All ${sessions.length}`}</button>` : '';
     return `<header class="top"><div class="brand"><img src="icon.svg" alt=""><div><h1>Start A Workout</h1><div class="syncline">${syncText()}</div></div></div></header>
       <div class="day-grid">${days}</div>
       <button class="btn wide" data-action="start" data-day="Other">Empty Workout</button>
-      ${recent ? `<h2>Recent Workouts</h2><ul class="list">${recent}</ul>` : ''}`;
+      ${recent ? `<h2>Recent Workouts</h2><ul class="list">${recent}</ul>${more}` : ''}`;
+  }
+
+  // ---------- Reviewing and fixing a past workout ----------
+  // S.review = { session, edit, drafts }. Drafts are sets or drops added in Edit but not filled
+  // in yet; they're only saved once you type into them, so a stray tap leaves nothing behind.
+  const isDropRow = (r) => !!num(r.Drop);
+  const rvKey = (r) => (exDef(r.Exercise).bodyweight ? r.Exercise : `${r.Exercise}|${r.Variation || ''}`);
+  const rvLabel = (r) => (r.Type === 'Warm-up' ? 'W' : '') + (num(r.Set) || '') + (r.Side || '');
+  /** Rows of one set: the set itself and its drops. */
+  const sameSet = (a, b) =>
+    a.Session === b.Session && rvKey(a) === rvKey(b) && (a.Type || '') === (b.Type || '') && num(a.Set) === num(b.Set) && (a.Side || '') === (b.Side || '');
+  const rvRows = (id) => allSets().filter((r) => r.Session === id).concat(S.review.drafts.filter((r) => r.Session === id));
+  const rvRow = (id) => allSets().find((r) => r.ID === id) || S.review.drafts.find((r) => r.ID === id) || null;
+  const isDraft = (r) => S.review.drafts.some((d) => d.ID === r.ID);
+
+  /** A past workout's rows grouped by exercise (and type, for weights), in the order you did them. */
+  function reviewGroups(id) {
+    const groups = new Map();
+    rvRows(id).forEach((r) => {
+      const key = rvKey(r);
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = { key, name: r.Exercise, variation: exDef(r.Exercise).bodyweight ? '' : r.Variation || '', rows: [], first: '' }));
+      g.rows.push(r);
+      const t = String(r.Start || r.Time || '');
+      if (t && (!g.first || t < g.first)) g.first = t;
+    });
+    const rank = (r) => [r.Type === 'Warm-up' ? 0 : 1, num(r.Set) || 0, r.Side === 'R' ? 1 : 0, num(r.Drop) || 0];
+    const byRank = (a, b) => {
+      const x = rank(a);
+      const y = rank(b);
+      for (let n = 0; n < x.length; n++) if (x[n] !== y[n]) return x[n] - y[n];
+      return 0;
+    };
+    return [...groups.values()].sort((a, b) => a.first.localeCompare(b.first)).map((g) => Object.assign(g, { rows: g.rows.sort(byRank) }));
+  }
+
+  function reviewView() {
+    const R = S.review;
+    const groups = reviewGroups(R.session);
+    if (!groups.length) {
+      S.review = null;
+      return startView();
+    }
+    const real = allSets().filter((r) => r.Session === R.session);
+    const info = S.pending.sessions[R.session] || S.history.sessions.find((r) => r.Session === R.session) || {};
+    const first = real[0] || groups[0].rows[0];
+    const work = real.filter((r) => r.Type !== 'Warm-up');
+    const sets = work.filter((r) => r.Side !== 'R' && !isDropRow(r)).length;
+    const volume = work.reduce((a, r) => a + (num(r.kg) || 0) * (num(r.Reps) || 0), 0);
+    const rests = work.map((r) => num(r['Rest (s)'])).filter((x) => x > 0);
+    const avg = rests.length ? rests.reduce((a, b) => a + b, 0) / rests.length : null;
+    const hhmm = (v) => (v ? String(v).slice(0, 5) : '');
+    const when = [niceDate(first.Date), info.Start ? `${hhmm(info.Start)}–${hhmm(info.End)}` : '', num(info['Length (min)']) ? `${num(info['Length (min)'])} min` : '']
+      .filter(Boolean)
+      .join(' · ');
+    let h = `<header class="top rv-top">
+      <button class="link" data-action="rv-close">‹ All Workouts</button>
+      <div class="rv-head"><h1>${esc(first.Day || 'Workout')}</h1>
+        <button class="btn small ${R.edit ? 'primary' : ''}" data-action="rv-edit">${R.edit ? 'Done' : 'Edit'}</button></div>
+      <div class="muted">${esc(when)}</div></header>`;
+    if (R.edit) h += '<p class="muted small">Changes save as you type. Tap ✕ twice to delete a set or drop.</p>';
+    else {
+      h += `<div class="stats rv-stats">
+        <div><b>${sets}</b><span>Working Sets</span></div>
+        <div><b>${volume ? Math.round(volume).toLocaleString() : '–'}</b><span>Kg Volume</span></div>
+        <div><b>${avg != null ? clock(avg) : '–'}</b><span>Average Rest</span></div></div>`;
+    }
+    groups.forEach((g) => (h += R.edit ? rvEditGroup(g) : rvReadGroup(g)));
+    if (R.edit) h += '<button class="btn ghost danger wide" data-action="rv-delete-all">Delete This Workout</button>';
+    return h;
+  }
+
+  function rvReadGroup(g) {
+    const def = exDef(g.name);
+    let h = `<section class="panel"><h2>${esc(g.name)}</h2>${g.variation ? `<div class="muted small rv-var">${esc(g.variation)}</div>` : ''}`;
+    g.rows.forEach((r) => {
+      const w = weightLabel({ kg: num(r.kg), variation: r.Variation || '' }, def);
+      const reps = num(r.Reps);
+      const p = num(r.Partials);
+      const txt = `${w ? w + ' × ' : ''}${reps == null ? '–' : reps}${p ? ` +${p}p` : ''}`;
+      const rest = !isDropRow(r) && num(r['Rest (s)']) ? `rest ${clock(num(r['Rest (s)']))}` : '';
+      const label = isDropRow(r) ? '<span class="drop-mark">↳</span>' : `<span class="set-no">${esc(rvLabel(r))}</span>`;
+      h += `<div class="rv-row${r.Type === 'Warm-up' ? ' warm' : ''}">${label}<span>${esc(txt)}</span><span class="muted small">${rest}</span></div>`;
+    });
+    return h + '</section>';
+  }
+
+  function rvEditGroup(g) {
+    const def = exDef(g.name);
+    const parts = S.settings.partials;
+    const grid = `rv-grid${parts ? ' p' : ''}`;
+    let h = `<section class="panel"><h2>${esc(g.name)}</h2>`;
+    if (!def.bodyweight && hasOptions(def)) {
+      // Picked the wrong grip or setup? Change it for the whole exercise here.
+      const cur = (g.variation || '').split(' · ');
+      h += `<div class="rv-choices">${groupsOf(def)
+        .map((grp, n) => {
+          const known = !cur[n] || grp.choices.some((c) => c.name === cur[n]);
+          return `<label class="rv-choice"><span>${esc(grp.label)}</span><select data-rvvar="${esc(g.key)}" data-n="${n}">${
+            known ? '' : `<option selected>${esc(cur[n])}</option>`
+          }${grp.choices.map((c) => `<option ${c.name === cur[n] ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
+        })
+        .join('')}</div>`;
+    } else if (g.variation) {
+      h += `<div class="muted small rv-var">${esc(g.variation)}</div>`;
+    }
+    h += `<div class="set-head ${grid}"><span></span><span>${def.bodyweight ? 'Added Kg' : esc(def.kgLabel || 'Kg')}</span><span>Reps</span>${parts ? '<span>Partials</span>' : ''}<span></span></div>`;
+    g.rows.forEach((r, n) => {
+      const a = `data-id="${esc(r.ID)}"`;
+      const box = (col, mode, aria) =>
+        `<input data-rv="${col}" ${a} value="${esc(r[col] == null ? '' : r[col])}" inputmode="${mode}" autocomplete="off" aria-label="${esc(rvLabel(r))} ${aria}">`;
+      const weighted = !def.bodyweight || r.Variation === 'Weighted';
+      const label = isDropRow(r) ? '<span class="drop-mark">↳</span>' : `<span class="set-no">${esc(rvLabel(r))}</span>`;
+      h += `<div class="rv-edit ${grid}${isDraft(r) ? ' draft' : ''}${r.Type === 'Warm-up' ? ' warm' : ''}">${label}${
+        weighted ? box('kg', 'decimal', 'kg') : `<span class="rv-mode">${esc(weightLabel({ kg: null, variation: r.Variation || '' }, def))}</span>`
+      }${box('Reps', 'numeric', 'reps')}${parts ? box('Partials', 'numeric', 'partial reps') : ''}<button class="drop-x" data-action="rv-del" ${a} aria-label="Delete ${esc(rvLabel(r))}">✕</button></div>`;
+      // "+ Drop" after the last row of each working set, for a drop you forgot to log.
+      const next = g.rows[n + 1];
+      if (!def.bodyweight && r.Type !== 'Warm-up' && !(next && sameSet(next, r))) {
+        const main = g.rows.find((x) => sameSet(x, r) && !isDropRow(x));
+        if (main) h += `<button class="link rv-add" data-action="rv-add-drop" data-id="${esc(main.ID)}">+ Drop</button>`;
+      }
+    });
+    h += `<button class="btn small rv-add-set" data-action="rv-add-set" data-key="${esc(g.key)}">+ Add Set</button>`;
+    return h + '</section>';
+  }
+
+  /** Saves edited rows (drafts become real rows), then the workout's totals. */
+  function rvSave(rows) {
+    const out = rows.slice();
+    // A drop on a set you just added also saves that set.
+    rows.filter(isDropRow).forEach((d) => {
+      const main = S.review.drafts.find((x) => sameSet(x, d) && !isDropRow(x));
+      if (main && !out.includes(main)) out.push(main);
+    });
+    const ids = new Set(out.map((r) => r.ID));
+    S.review.drafts = S.review.drafts.filter((r) => !ids.has(r.ID));
+    queueRows(out.map((r) => Object.assign({}, r)));
+    rvSessionRow(out[0].Session);
+    scheduleSync();
+  }
+  function rvEdit(el) {
+    const r = rvRow(el.dataset.id);
+    if (!r) return;
+    const v = num(el.value);
+    rvSave([Object.assign({}, r, { [el.dataset.rv]: v == null ? '' : v })]);
+    el.closest('.rv-edit').classList.remove('draft');
+  }
+  /** Keeps the workout's set count and work and rest minutes in step with its rows. */
+  function rvSessionRow(id) {
+    const rows = allSets().filter((r) => r.Session === id);
+    if (!rows.length) return dropSession(id);
+    const base = S.pending.sessions[id] || S.history.sessions.find((r) => r.Session === id);
+    if (!base) return;
+    const sum = (col) => rows.reduce((a, r) => a + (num(r[col]) || 0), 0);
+    S.pending.sessions[id] = Object.assign({}, base, {
+      Sets: rows.filter((r) => r.Type !== 'Warm-up' && r.Side !== 'R' && !isDropRow(r)).length,
+      'Work (min)': Math.round(sum('Set (s)') / 6) / 10,
+      'Rest (min)': Math.round(sum('Rest (s)') / 6) / 10,
+    });
+    S.pending.deleteSessions = S.pending.deleteSessions.filter((x) => x !== id);
+    savePending();
+  }
+  /** Deletes a set (with its drops) or one drop, then closes the gap in the numbering. */
+  function rvDelete(id) {
+    const r = rvRow(id);
+    if (!r) return;
+    const drafts = new Set(S.review.drafts.map((x) => x.ID));
+    const gone = isDropRow(r) ? [r] : rvRows(r.Session).filter((x) => sameSet(x, r));
+    const goneIds = new Set(gone.map((x) => x.ID));
+    S.review.drafts = S.review.drafts.filter((x) => !goneIds.has(x.ID));
+    const real = gone.filter((x) => !drafts.has(x.ID)).map((x) => x.ID);
+    if (real.length) unqueueRows(real);
+    const fix = [];
+    const renumber = (x, patch) => (drafts.has(x.ID) ? Object.assign(x, patch) : fix.push(Object.assign({}, x, patch)));
+    if (isDropRow(r)) {
+      rvRows(r.Session)
+        .filter((x) => sameSet(x, r) && isDropRow(x))
+        .sort((a, b) => num(a.Drop) - num(b.Drop))
+        .forEach((x, n) => num(x.Drop) !== n + 1 && renumber(x, { Drop: n + 1 }));
+    } else if (!rvRows(r.Session).some((x) => rvKey(x) === rvKey(r) && (x.Type || '') === (r.Type || '') && num(x.Set) === num(r.Set))) {
+      // That set number is gone on both sides: the sets after it move up one.
+      rvRows(r.Session)
+        .filter((x) => rvKey(x) === rvKey(r) && (x.Type || '') === (r.Type || '') && num(x.Set) > num(r.Set))
+        .forEach((x) => renumber(x, { Set: num(x.Set) - 1 }));
+    }
+    if (fix.length) queueRows(fix);
+    if (real.length || fix.length) {
+      rvSessionRow(r.Session);
+      scheduleSync();
+    }
+  }
+  function rvFocus(id, col) {
+    const el = document.querySelector(`[data-rv="${col}"][data-id="${id}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      el.focus();
+    }
+  }
+  function rvAddDrop(id) {
+    const main = rvRow(id);
+    if (!main) return;
+    const n = Math.max(0, ...rvRows(main.Session).filter((x) => sameSet(x, main)).map((x) => num(x.Drop) || 0)) + 1;
+    const d = Object.assign({}, main, { Drop: n, kg: '', Reps: '', Partials: '', 'Set (s)': '', 'Rest (s)': '', ID: `${main.ID}-${uid()}` });
+    S.review.drafts.push(d);
+    render();
+    rvFocus(d.ID, 'kg');
+  }
+  function rvAddSet(key) {
+    const g = reviewGroups(S.review.session).find((x) => x.key === key);
+    if (!g) return;
+    const mains = g.rows.filter((r) => !isDropRow(r) && r.Type !== 'Warm-up');
+    const last = mains[mains.length - 1] || g.rows.filter((r) => !isDropRow(r)).pop();
+    const n = Math.max(0, ...mains.map((r) => num(r.Set) || 0)) + 1;
+    const sides = mains.filter((r) => num(r.Set) === num(last.Set)).map((r) => r.Side || '');
+    const blank = { Type: '', Set: n, Drop: '', Reps: '', Partials: '', Start: '', End: '', 'Set (s)': '', 'Rest (s)': '' };
+    const added = (sides.length ? sides : ['']).map((side) => Object.assign({}, last, blank, { Side: side, ID: uid() }));
+    S.review.drafts.push(...added);
+    render();
+    rvFocus(added[0].ID, 'Reps');
+  }
+  /** Picking a different grip or setup in Edit relabels every set of that exercise. */
+  function rvVariation(el) {
+    const g = reviewGroups(S.review.session).find((x) => x.key === el.dataset.rvvar);
+    if (!g) return;
+    const def = exDef(g.name);
+    const cur = (g.variation || '').split(' · ');
+    const parts = groupsOf(def).map((grp, n) => cur[n] || grp.choices[0].name);
+    parts[+el.dataset.n] = el.value;
+    const v = parts.join(' · ');
+    const real = [];
+    g.rows.forEach((x) => (isDraft(x) ? (x.Variation = v) : real.push(Object.assign({}, x, { Variation: v }))));
+    if (real.length) {
+      queueRows(real);
+      scheduleSync();
+    }
+    render();
   }
 
   /** The pinned panel: total time, plus the running set or the countdown to the next set. */
@@ -2277,6 +2522,8 @@
 
   const ACTIONS = {
     tab(el) {
+      // Tapping Workout again from a past workout goes back to the start page.
+      if (el.dataset.tab === 'workout' && S.tab === 'workout') S.review = null;
       S.tab = el.dataset.tab;
       S.editingNote = null;
       S.reorder = false;
@@ -2286,6 +2533,47 @@
     },
     start(el) {
       startWorkout(el.dataset.day);
+    },
+    'recent-all'() {
+      S.recentAll = !S.recentAll;
+      render();
+    },
+    'rv-open'(el) {
+      S.review = { session: el.dataset.session, edit: false, drafts: [] };
+      render();
+      window.scrollTo(0, 0);
+    },
+    'rv-close'() {
+      S.review = null;
+      render();
+      window.scrollTo(0, 0);
+    },
+    'rv-edit'() {
+      S.review.edit = !S.review.edit;
+      S.review.drafts = [];
+      render();
+    },
+    'rv-del'(el) {
+      if (!armed(el, 'Del?')) return;
+      rvDelete(el.dataset.id);
+      render();
+    },
+    'rv-add-drop'(el) {
+      rvAddDrop(el.dataset.id);
+    },
+    'rv-add-set'(el) {
+      rvAddSet(el.dataset.key);
+    },
+    'rv-delete-all'(el) {
+      if (!armed(el, 'Tap Again To Delete Every Set In This Workout')) return;
+      const id = S.review.session;
+      unqueueRows(allSets().filter((r) => r.Session === id).map((r) => r.ID));
+      dropSession(id);
+      S.review = null;
+      toast('Workout Deleted');
+      render();
+      scheduleSync();
+      window.scrollTo(0, 0);
     },
     toggle(el) {
       const c = S.current;
@@ -2706,6 +2994,8 @@
 
   document.addEventListener('change', (e) => {
     const el = e.target;
+    if (S.review && el.dataset.rv) return rvEdit(el);
+    if (S.review && el.dataset.rvvar) return rvVariation(el);
     if (el.dataset.f === 'mode' && S.current) {
       const k = el.dataset.k;
       const i = +el.dataset.i;

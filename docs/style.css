@@ -563,3 +563,29 @@ input[type="radio"] { width: 22px; height: 22px; padding: 0; accent-color: var(-
 .connect { max-width: 400px; margin: 0 auto; padding-top: calc(48px + var(--safe-top)); text-align: center; }
 .connect .logo { width: 96px; height: 96px; margin: 0 auto 16px; border-radius: 22px; display: block; }
 .connect input { margin-top: 16px; text-align: center; }
+
+/* Recent workouts, and reviewing or fixing a past one */
+.list li.tap { padding: 0; }
+.li-btn { appearance: none; border: 0; background: none; color: inherit; font: inherit; text-align: left; width: 100%; padding: 12px 16px; display: block; cursor: pointer; }
+.li-btn:active { background: var(--card2); }
+.chev { color: var(--muted); margin-left: 8px; font-weight: 400; }
+.link.more { display: block; margin: 8px auto 0; color: var(--accent-text); font-weight: 650; }
+.rv-top { display: block; }
+.rv-top .link { padding: 0 0 8px; color: var(--accent-text); font-weight: 650; }
+.rv-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.rv-stats { margin: 4px 0 14px; }
+.rv-var { margin: -6px 0 10px; }
+.panel h2 + .rv-row, .panel h2 + .rv-choices, .panel h2 + .set-head { margin-top: -2px; }
+.rv-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; min-height: 32px; font-variant-numeric: tabular-nums; }
+.rv-row.warm .set-no, .rv-edit.warm .set-no { color: var(--warn); font-weight: 700; }
+.rv-grid { display: grid; gap: 8px; align-items: center; grid-template-columns: 34px 1fr 1fr 44px; }
+.rv-grid.p { grid-template-columns: 34px 1fr 1fr 1fr 44px; }
+.rv-edit { margin-bottom: 8px; }
+.rv-edit input { height: 40px; text-align: center; padding: 0 4px; }
+.rv-edit.draft input { border-style: dashed; }
+.rv-mode { text-align: center; color: var(--muted); font-size: 14px; }
+.rv-add { display: block; margin: -4px 0 6px 42px; font-size: 13px; color: var(--accent-text); padding: 2px 0; }
+.rv-add-set { margin-top: 4px; }
+.rv-choices { display: grid; gap: 8px; margin: 0 0 12px; }
+.rv-choice { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.drop-x.armed { color: var(--accent-text); font-size: 13px; font-weight: 700; }
