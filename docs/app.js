@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.7.0';
+  const VERSION = '3.8.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -166,7 +166,7 @@
   let notice = '';
   const S = {
     settings: Object.assign(
-      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false, partials: true },
+      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false, partials: true, bodyKg: 0 },
       load(KEYS.settings, {})
     ),
     library: loadLibrary(),
@@ -798,13 +798,6 @@
     if (atOrAbove.length && reps > Math.max(...atOrAbove.map((p) => p[1]))) out.push(`most reps at ${fmt(e.kg)} kg`);
     return out;
   }
-  function setVolume(k, s) {
-    const def = itemDef(k);
-    if (s.warm || def.bodyweight) return 0;
-    const v = (x) => (num(x.kg) || 0) * (num(x.reps) || 0);
-    return v(s) + (s.drops || []).reduce((a, d) => a + v(d), 0);
-  }
-
   // ---------- Sheet rows ----------
   const dropBase = (s, d) => `${s.id}-${d.id}`;
   /** Every sheet row id a set can own: its own row plus one per drop. */
@@ -1134,12 +1127,15 @@
     const run = runningSet();
     if (run) endSet(run.k, run.i);
     const c = S.current;
-    if (sessionStats().any) {
+    const saved = sessionStats().any;
+    if (saved) {
       queueSession();
       toast('Workout Saved');
     } else {
       dropSession(c.session);
     }
+    // Land on the workout's summary, with Edit right there for anything logged wrong.
+    if (saved) S.review = { session: c.session, edit: false, drafts: [] };
     closeWorkout();
   }
   function discardWorkout() {
@@ -1606,11 +1602,12 @@
     const real = allSets().filter((r) => r.Session === R.session);
     const info = S.pending.sessions[R.session] || S.history.sessions.find((r) => r.Session === R.session) || {};
     const first = real[0] || groups[0].rows[0];
-    const work = real.filter((r) => r.Type !== 'Warm-up');
-    const sets = work.filter((r) => r.Side !== 'R' && !isDropRow(r)).length;
-    const volume = work.reduce((a, r) => a + (num(r.kg) || 0) * (num(r.Reps) || 0), 0);
-    const rests = work.map((r) => num(r['Rest (s)'])).filter((x) => x > 0);
-    const avg = rests.length ? rests.reduce((a, b) => a + b, 0) / rests.length : null;
+    const sets = real.filter((r) => r.Type !== 'Warm-up' && r.Side !== 'R' && !isDropRow(r)).length;
+    const sum = (col) => real.reduce((a, r) => a + (num(r[col]) || 0), 0);
+    const starts = real.map((r) => toSec(r.Start)).filter((x) => x != null);
+    const ends = real.map((r) => toSec(r.End)).filter((x) => x != null);
+    const span = starts.length && ends.length ? Math.max(...ends) - Math.min(...starts) : -1;
+    const total = span >= 0 ? Math.max(60, span) : (num(info['Length (min)']) || 0) * 60;
     const hhmm = (v) => (v ? String(v).slice(0, 5) : '');
     const when = [niceDate(first.Date), info.Start ? `${hhmm(info.Start)}–${hhmm(info.End)}` : '', num(info['Length (min)']) ? `${num(info['Length (min)'])} min` : '']
       .filter(Boolean)
@@ -1621,12 +1618,8 @@
         <button class="btn small ${R.edit ? 'primary' : ''}" data-action="rv-edit">${R.edit ? 'Done' : 'Edit'}</button></div>
       <div class="muted">${esc(when)}</div></header>`;
     if (R.edit) h += '<p class="muted small">Changes save as you type. Tap ✕ twice to delete a set or drop.</p>';
-    else {
-      h += `<div class="stats rv-stats">
-        <div><b>${sets}</b><span>Working Sets</span></div>
-        <div><b>${volume ? Math.round(volume).toLocaleString() : '–'}</b><span>Kg Volume</span></div>
-        <div><b>${avg != null ? clock(avg) : '–'}</b><span>Average Rest</span></div></div>`;
-    }
+    else h += statTiles({ total, work: sum('Set (s)'), rest: sum('Rest (s)'), sets }, null, 'rv-stats');
+    h += issuesHtml(workoutIssues(rvCheckSets(R.session)), 'review');
     groups.forEach((g) => (h += R.edit ? rvEditGroup(g) : rvReadGroup(g)));
     if (R.edit) h += '<button class="btn ghost danger wide" data-action="rv-delete-all">Delete This Workout</button>';
     return h;
@@ -2238,32 +2231,167 @@
     return `<div class="markers${label ? ' indent' : ''}" id="ft-${s.id}"${inner ? '' : ' hidden'}>${inner}</div>`;
   }
 
+  // ---------- Workout summary numbers ----------
+  // Estimated calories by the MET method: 1 MET is about 1 kcal per kg of body weight per hour.
+  // Hard sets count as vigorous lifting (about 6 METs); the time between sets as light activity (about 2).
+  const MET_WORK = 6;
+  const MET_REST = 2;
+  function estCalories(workSec, totalSec) {
+    const kg = Number(S.settings.bodyKg);
+    if (!(kg > 0) || !(totalSec > 0)) return null;
+    return Math.round((kg * (MET_WORK * workSec + MET_REST * Math.max(0, totalSec - workSec))) / 3600);
+  }
+  /** Summary tiles: total, working and rest minutes, working sets and estimated calories (then any extras). */
+  function statTiles({ total, work, rest, sets }, extra, cls) {
+    const kcal = estCalories(work, total);
+    const min = (sec) => Math.round(sec / 60);
+    const tiles = [
+      [min(total), 'Total Minutes'],
+      [min(work), 'Working Minutes'],
+      [min(rest), 'Rest Minutes'],
+      [sets, 'Working Sets'],
+      [kcal != null ? kcal.toLocaleString() : '–', 'Est. Calories'],
+    ].concat(extra || []);
+    return `<div class="stats${tiles.length === 5 ? ' s5' : ''}${cls ? ' ' + cls : ''}">${tiles
+      .map(([v, label, hot]) => `<div class="${hot ? 'hot' : ''}"><b>${v}</b><span>${label}</span></div>`)
+      .join('')}</div>${kcal == null ? '<p class="muted small">Add your body weight in Settings to see estimated calories.</p>' : ''}`;
+  }
+
+  // ---------- Checking a workout for logging slips ----------
+  const median = (xs) => {
+    const v = xs.slice().sort((a, b) => a - b);
+    const m = Math.floor(v.length / 2);
+    return v.length ? Math.round(v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2) : null;
+  };
+  /**
+   * Looks over a workout's finished sets for likely slips. Timing slips get a fix:
+   * - a set of a few seconds (Start tapped late) or one far longer than your others (End tapped late)
+   *   is set to the middle of your other sets of that exercise in the workout, else your usual time;
+   *   a late Start never takes more than the rest before it.
+   * A working set with no reps, or a weight or rep count far off your other sets, is only pointed out.
+   * Each set: { id, name, group, label, warm, dur, rest, reps, kg, bw, apply(sec) }.
+   */
+  function workoutIssues(sets) {
+    const issues = [];
+    sets.forEach((x) => {
+      const peers = sets.filter((y) => y !== x && y.group === x.group);
+      const normal = peers.map((y) => y.dur).filter((d) => d >= SHORT_SET);
+      const typical = normal.length ? median(normal) : x.warm ? null : usualSetTime(x.name);
+      if (x.dur < SHORT_SET) {
+        const est = typical && (x.rest != null ? Math.min(typical, x.dur + x.rest) : typical);
+        if (est >= SHORT_SET) {
+          const rest = x.rest != null ? `, and its rest from ${clock(x.rest)} to ${clock(x.rest - (est - x.dur))}` : '';
+          issues.push({ key: `${x.id}:short`, text: `${x.label}: set time ${clock(x.dur)}, so Start was probably tapped late. Change the set to ${clock(est)}${rest}.`, fix: () => x.apply(typical) });
+        } else if (!x.warm) {
+          const why = typical ? 'there was no rest before it to take the time from' : "there's nothing to estimate it from";
+          issues.push({ key: `${x.id}:short`, text: `${x.label}: set time ${clock(x.dur)}, so Start was probably tapped late, but ${why}. Tap its time to fix it by hand.` });
+        }
+      } else if (normal.length >= 2 && x.dur > Math.max(2.5 * typical, typical + 120)) {
+        issues.push({ key: `${x.id}:long`, text: `${x.label}: set time ${clock(x.dur)}, far longer than your others (${clock(typical)}), so End was probably tapped late. Change it to ${clock(typical)}.`, fix: () => x.apply(typical) });
+      }
+      if (x.warm) return;
+      if (x.reps == null) issues.push({ key: `${x.id}:reps`, text: `${x.label} has no reps.` });
+      const work = peers.filter((y) => !y.warm);
+      const kgs = work.filter((y) => y.kg != null && !y.bw).map((y) => y.kg);
+      const mk = median(kgs);
+      if (!x.bw && x.kg != null && kgs.length >= 2 && mk && (x.kg >= mk * 2.5 || x.kg <= mk / 2.5)) {
+        issues.push({ key: `${x.id}:kg`, text: `${x.label}: ${fmt(x.kg)} kg is far from your other sets (about ${fmt(mk)} kg). A typo?` });
+      }
+      const reps = work.filter((y) => y.reps != null).map((y) => y.reps);
+      const mr = median(reps);
+      if (x.reps != null && reps.length >= 2 && mr && x.reps >= 25 && x.reps >= mr * 3) {
+        issues.push({ key: `${x.id}:many`, text: `${x.label}: ${x.reps} reps, against about ${mr} on your other sets. A typo?` });
+      }
+    });
+    return issues;
+  }
+  /** The open workout's finished sets, for the check. */
+  function liveCheckSets() {
+    const out = [];
+    forEachSet((k, i, s) => {
+      if (!s.end) return;
+      const it = S.current.items[k];
+      const def = exDef(it.name);
+      out.push({
+        id: s.id,
+        name: it.name,
+        group: (def.bodyweight ? it.name : `${it.name}|${variationOf(k, s)}`) + (s.warm ? '|W' : ''),
+        label: `${it.name} ${setLabel(k, i)}`,
+        warm: s.warm,
+        dur: setSecs(s),
+        rest: s.rest,
+        reps: num(s.reps),
+        kg: num(s.kg),
+        bw: def.bodyweight && s.mode !== 'Weighted',
+        apply: (sec) => {
+          const v = Math.min(sec, s.rest != null && sec > setSecs(s) ? setSecs(s) + s.rest : Infinity);
+          if (v >= SHORT_SET) fixSetTime(k, i, v);
+        },
+      });
+    });
+    return out;
+  }
+  /** A past workout's sets (those with times), for the check. */
+  function rvCheckSets(id) {
+    return allSets()
+      .filter((r) => r.Session === id && !isDropRow(r) && toSec(r.End) != null)
+      .map((r) => ({
+        id: r.ID,
+        name: r.Exercise,
+        group: rvKey(r) + (r.Type === 'Warm-up' ? '|W' : ''),
+        label: `${r.Exercise} ${rvLabel(r)}`,
+        warm: r.Type === 'Warm-up',
+        dur: rvDur(r) || 0,
+        rest: num(r['Rest (s)']),
+        reps: num(r.Reps),
+        kg: num(r.kg),
+        bw: exDef(r.Exercise).bodyweight && r.Variation !== 'Weighted',
+        apply: (sec) => {
+          const x = rvRow(r.ID);
+          if (!x) return;
+          const rest = num(x['Rest (s)']);
+          const dur = rvDur(x) || 0;
+          const v = Math.min(sec, rest != null && sec > dur ? dur + rest : Infinity);
+          if (v >= SHORT_SET) rvFixTime(r.ID, v);
+        },
+      }));
+  }
+  const currentIssues = () =>
+    S.current && S.modal === 'finish' ? workoutIssues(liveCheckSets()) : S.review ? workoutIssues(rvCheckSets(S.review.session)) : [];
+  function issuesHtml(issues, where) {
+    if (!issues.length) return where === 'finish' ? '<p class="muted small">✓ Checked your sets: nothing looks off.</p>' : '';
+    const fixable = issues.filter((x) => x.fix).length;
+    const hint = where === 'finish' ? ' Tap Keep Going to fix it.' : ' Tap Edit to fix it.';
+    return `<div class="issues"><div class="issues-head">${issues.length === 1 ? '1 thing looks off' : `${issues.length} things look off`}</div>
+      ${issues
+        .map(
+          (x) => `<div class="issue"><span>${esc(x.text)}${x.fix || /by hand/.test(x.text) ? '' : hint}</span>${
+            x.fix ? `<button class="btn small" data-action="issue-fix" data-issue="${esc(x.key)}">Fix</button>` : ''
+          }</div>`
+        )
+        .join('')}
+      ${fixable > 1 ? `<button class="btn wide" data-action="issue-fix-all">Fix All ${fixable}</button>` : ''}</div>`;
+  }
+
   function finishModal() {
     const st = sessionStats();
     let ups = 0;
-    let volume = 0;
     const prList = [];
     forEachSet((k, i, s) => {
       if (!s.end || s.warm) return;
       const m = compareSet(k, i);
       if (m && m.dir > 0) ups++;
-      volume += setVolume(k, s);
       const prs = prsFor(k, i);
       if (prs.length) prList.push(`${S.current.items[k].name} (${prs.join(', ')})`);
     });
-    const mins = st.first ? Math.max(1, Math.round((st.last - st.first) / 60000)) : 0;
+    const total = st.first ? Math.max(60, (st.last - st.first) / 1000) : 0;
     const run = runningSet();
     return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
       <h2 id="mt">Finish ${esc(S.current.day)}?</h2>
-      <div class="stats">
-        <div><b>${mins}</b><span>Minutes</span></div>
-        <div><b>${st.sets}</b><span>Working Sets</span></div>
-        <div><b>${ups}</b><span>Beat Last Time</span></div>
-        <div class="${prList.length ? 'hot' : ''}"><b>${prList.length}</b><span>PRs</span></div>
-        <div><b>${st.avgRest != null ? clock(st.avgRest) : '–'}</b><span>Average Rest</span></div>
-        <div><b>${volume ? Math.round(volume).toLocaleString() : '–'}</b><span>Kg Volume</span></div>
-      </div>
+      ${statTiles({ total, work: st.work, rest: st.rest, sets: st.sets }, [[prList.length, 'PRs', prList.length > 0]])}
+      ${ups ? `<p class="small">▲ Beat last time on ${ups} set${ups === 1 ? '' : 's'}.</p>` : ''}
       ${prList.length ? `<p class="small"><b>New PRs:</b> ${esc(prList.join(' · '))}</p>` : ''}
+      ${issuesHtml(workoutIssues(liveCheckSets()), 'finish')}
       ${run ? '<p class="muted small">The set that’s running will be ended now.</p>' : ''}
       ${st.any || run ? '' : '<p class="muted">No sets finished, so nothing will be saved.</p>'}
       <button class="btn primary wide" data-action="save-finish">${st.any || run ? 'Save Workout' : 'Close Workout'}</button>
@@ -2551,6 +2679,8 @@
         <p class="muted small">When on, each exercise gets a “Superset With…” button, and Workout Setup can link exercises. Pull-Up + Chin-Up stays a superset either way.</p>
         <label class="check"><input type="checkbox" data-setting="partials" ${S.settings.partials ? 'checked' : ''}> Partial Reps</label>
         <p class="muted small">When on, each exercise card has a Partial Reps switch, and Workout Setup can turn it on by default. When off, partial reps are hidden everywhere.</p>
+        <label class="setup-row"><span>Body Weight (Kg)</span><input data-setting="bodyKg" value="${Number(S.settings.bodyKg) > 0 ? esc(fmt(S.settings.bodyKg)) : ''}" inputmode="decimal" autocomplete="off" placeholder="e.g. 75" aria-label="Body weight in kg"></label>
+        <p class="muted small">Used for the estimated calories in workout summaries: about 6 METs while lifting and 2 between sets (1 MET is roughly 1 kcal per kg per hour). It's a rough guide, not a measurement. Leave blank to hide it.</p>
       </section>
       <section class="panel">
         <h2>Workout Setup</h2>
@@ -2692,6 +2822,20 @@
     },
     'rv-time'(el) {
       openTimeModal({ id: el.dataset.id });
+    },
+    'issue-fix'(el) {
+      const x = currentIssues().find((i) => i.key === el.dataset.issue);
+      if (x && x.fix) {
+        x.fix();
+        toast('Fixed');
+      }
+      render();
+    },
+    'issue-fix-all'() {
+      const fixes = currentIssues().filter((x) => x.fix);
+      fixes.forEach((x) => x.fix());
+      toast(`Fixed ${fixes.length}`);
+      render();
     },
     'time-edit'(el) {
       openTimeModal({ k: el.dataset.k, i: +el.dataset.i });

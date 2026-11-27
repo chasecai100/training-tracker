@@ -547,12 +547,16 @@ input[type="radio"] { width: 22px; height: 22px; padding: 0; accent-color: var(-
   z-index: 20;
   padding: 16px 16px calc(16px + var(--safe-bottom));
 }
-.modal { background: var(--card); border-radius: 20px; padding: 20px; width: 100%; max-width: 480px; border: 1px solid var(--line); }
+.modal { background: var(--card); border-radius: 20px; padding: 20px; width: 100%; max-width: 480px; border: 1px solid var(--line); max-height: calc(100dvh - 32px - var(--safe-top) - var(--safe-bottom)); overflow-y: auto; overscroll-behavior: contain; }
 .modal h2 { margin: 0; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
 .stats div { background: var(--card2); border-radius: 12px; padding: 12px 6px; text-align: center; }
 .stats b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
 .stats span { font-size: 12px; color: var(--muted); }
+/* Five tiles: three on the first row, two wider ones on the second. */
+.stats.s5 { grid-template-columns: repeat(6, 1fr); }
+.stats.s5 div:nth-child(-n + 3) { grid-column: span 2; }
+.stats.s5 div:nth-child(n + 4) { grid-column: span 3; }
 
 /* Connect screen */
 .connect { max-width: 400px; margin: 0 auto; padding-top: calc(48px + var(--safe-top)); text-align: center; }
@@ -588,3 +592,10 @@ input[type="radio"] { width: 22px; height: 22px; padding: 0; accent-color: var(-
 .rv-choices { display: grid; gap: 8px; margin: 0 0 12px; }
 .rv-choice { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
 .drop-x.armed { color: var(--accent-text); font-size: 13px; font-weight: 700; }
+
+/* The workout check: likely logging slips, with fixes */
+.issues { background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 14px; padding: 12px 14px; margin: 10px 0 14px; display: grid; gap: 10px; }
+.issues-head { font-weight: 700; color: var(--accent-text); }
+.issue { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; font-size: 14px; line-height: 1.35; }
+.issue .btn { flex: none; }
+.issues .btn.wide { margin-top: 0; }

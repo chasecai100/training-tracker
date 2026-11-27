@@ -17,7 +17,10 @@ A web app for your iPhone and PC.
 1. **Start:**
    - Push, Pull, Legs, Shoulders, or an empty workout.
    - Once a day has history, its card shows your average workout time.
-   - Below that is a list of recent workouts (8, or Show All). Tap one to review it: working sets, kg volume, average rest, and every set, drop and warm-up by exercise.
+   - Below that is a list of recent workouts (8, or Show All). Tap one to review it.
+     - **Its summary:** total, working and rest minutes, working sets and estimated calories.
+     - **Below that:** every set, drop and warm-up by exercise, with set and rest times.
+     - Saving a workout opens this page straight away.
    - **Edit** on that page fixes logging mistakes:
      - Change kg, reps or partials, or an exercise's grip or setup.
      - Delete a set or drop (tap ✕ twice); later sets renumber to close the gap.
@@ -35,12 +38,17 @@ A web app for your iPhone and PC.
      - "Use Your Usual" fills in your typical set time for that exercise.
      - Past workouts have the same thing in Edit.
    - **Reorder** (Do Next, ↑ ↓, save the order), and **search** to add or create any exercise.
+   - **Finish:** shows total, working and rest minutes, working sets, estimated calories and PRs, plus how many sets beat last time. Save Workout then opens the workout's summary page, where Edit fixes anything logged wrong.
+   - **Workout check:** it runs by itself in the Finish dialog and on a workout's summary page.
+     - **Fixed with one tap (Fix, or Fix All):** a set of a few seconds (Start tapped late), or one far longer than the exercise's other sets (End tapped late; over 2.5× and 2 minutes more). The set gets the middle of that exercise's other set times in the workout, else your usual time. A late Start never takes more than the rest before it.
+     - **Only pointed out:** a working set with no reps, or a weight (2.5× off) or rep count (25+ and 3× the others) far from your other sets, a likely typo.
 3. **Exercises:** each exercise's note (edit it here), progress chart, records and history.
 4. **Settings:**
    - **Timer And Sound:** default rest, rest after warm-ups, a choice of rest-over sound with test buttons, and keep the screen on.
    - **Options:**
     - **Supersets**, off by default: shows the "Superset With…" options.
     - **Partial Reps**, on by default: shows the Partial Reps switch on each exercise card. When it's off, partial reps are hidden everywhere.
+    - **Body Weight (Kg):** used for estimated calories (MET method: about 6 METs while lifting, 2 between sets). Blank hides calories.
    - **Workout Setup:** every exercise on each day, with its own sets, warm-ups, rest, set style, default types, and bodyweight/band per set.
    - **New Exercise.**
 
