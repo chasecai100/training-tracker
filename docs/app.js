@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.4.1';
+  const VERSION = '3.5.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -967,6 +967,7 @@
     if (s.mode === 'Band' && !String(s.band || '').trim()) s.band = it.cfg.band || 'Purple';
     carryForward(k, i);
     c.lastEnd = s.end;
+    c.lastEndKey = k;
     const target = restAfter(k, s);
     c.restCountdown = target > 0;
     c.restBase = target;
@@ -982,6 +983,20 @@
     announcePr(k, i);
     const reps = document.querySelector(`.set-row [data-k="${k}"][data-i="${i}"][data-f="reps"]`);
     if (reps && !reps.value && !s.warm) reps.focus();
+  }
+
+  /** True once every set of the exercise (or superset) you last finished a set in is done. */
+  function finishedMovement() {
+    const c = S.current;
+    const b = c && c.lastEndKey && c.items[c.lastEndKey] ? blockOf(c.lastEndKey) : null;
+    return !!b && b.keys.every((k) => c.items[k].sets.every((s) => s.end));
+  }
+  /** The next exercise with sets still to do: after the finished one if possible, else any. */
+  function nextOpenBlock() {
+    const c = S.current;
+    const unfinished = (b) => b.keys.some((k) => c.items[k].sets.some((s) => !s.end));
+    const from = c.lastEndKey ? c.blocks.indexOf(blockOf(c.lastEndKey)) : -1;
+    return c.blocks.slice(from + 1).find(unfinished) || c.blocks.find(unfinished) || null;
   }
 
   /** A drop set is part of the set, not rest: reopen the set you just ended so its clock carries on. */
@@ -1294,7 +1309,7 @@
     }
     if (!c.lastEnd) return;
     const el = (now - new Date(c.lastEnd)) / 1000;
-    if (!c.restCountdown) {
+    if (!c.restCountdown || finishedMovement()) {
       if (t) t.textContent = clock(el);
       return;
     }
@@ -1418,6 +1433,15 @@
       </div>`;
     }
     if (!c.lastEnd) return '<div id="status" class="status idle"><div class="st-main"><span class="st-label">Ready · Tap Start On Your First Set</span></div></div>';
+    if (finishedMovement()) {
+      // Walking to the next machine: count up from the last set instead of counting down.
+      const next = nextOpenBlock();
+      return `<div id="status" class="status transition">
+        <div class="st-main"><span class="st-label">Time Since Last Set</span><b id="st-time" class="st-big"></b>
+          <span class="st-target">${next ? `Up Next: ${esc(blockNames(next).join(' + '))}` : 'All Exercises Done · Tap Finish'}</span></div>
+        ${next ? `<button class="btn" data-action="go-next" data-block="${next.id}">Go</button>` : ''}
+      </div>`;
+    }
     if (!c.restCountdown) {
       return `<div id="status" class="status">
         <div class="st-main"><span class="st-label">Resting · No Timer</span><b id="st-time" class="st-big"></b></div>
@@ -2313,6 +2337,17 @@
       render();
       const inp = document.querySelector(`.drop-row [data-k="${k}"][data-i="${i}"][data-d="${s.drops.length - 1}"][data-f="kg"]`);
       if (inp) inp.focus();
+    },
+    'go-next'(el) {
+      S.current.open = el.dataset.block;
+      persist();
+      render();
+      const card = document.getElementById('b-' + el.dataset.block);
+      if (card) {
+        const header = document.querySelector('.sticky');
+        const offset = header ? header.getBoundingClientRect().height : 0;
+        window.scrollBy(0, card.getBoundingClientRect().top - offset - 8);
+      }
     },
     'resume-set'(el) {
       resumeIfJustFinished(el.dataset.k, +el.dataset.i);
