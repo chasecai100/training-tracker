@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.8.1';
+  const VERSION = '3.9.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -311,6 +311,50 @@
   }
   const noteOf = (name) => notesMap()[name] || '';
 
+  // ---------- Fresh or pre-fatigued ----------
+  // How hard an exercise was done depends on what came before it in the workout: Incline after
+  // Machine Press is weaker than Incline first. So each exercise in each workout is either "fresh"
+  // or "pre-fatigued" (2+ working sets earlier in the workout hit any of its muscles), and hints and
+  // up/down markers compare against past workouts in the same state.
+  const PREFATIGUE_SETS = 2;
+  const musclesOf = (name) => (window.TT_MUSCLES && window.TT_MUSCLES[name]) || [name];
+  const shareMuscle = (a, b) => musclesOf(a).some((m) => musclesOf(b).includes(m));
+  /** Every row of one workout. */
+  function sessionRows(id) {
+    let idx = memoHist.get('sessIdx');
+    if (!idx) {
+      idx = new Map();
+      allSets().forEach((r) => (idx.get(r.Session) || idx.set(r.Session, []).get(r.Session)).push(r));
+      memoHist.set('sessIdx', idx);
+    }
+    return idx.get(id) || [];
+  }
+  /** Was this exercise pre-fatigued in that workout? (null when its times weren't recorded) */
+  function wasFatigued(id, name) {
+    const rows = sessionRows(id);
+    const hard = (r) => r.Type !== 'Warm-up' && !num(r.Drop) && r.Side !== 'R';
+    const starts = rows.filter((r) => r.Exercise === name && hard(r)).map((r) => toSec(r.Start)).filter((x) => x != null);
+    if (!starts.length) return null;
+    const first = Math.min(...starts);
+    const before = rows.filter((r) => r.Exercise !== name && hard(r) && toSec(r.Start) != null && toSec(r.Start) < first && shareMuscle(r.Exercise, name));
+    return before.length >= PREFATIGUE_SETS;
+  }
+  /** Is this exercise pre-fatigued in the open workout: by the time it started, or so far if not started yet. */
+  function liveFatigued(k) {
+    const it = S.current.items[k];
+    const started = it.sets
+      .filter((s) => !s.warm && s.start)
+      .map((s) => s.start)
+      .sort()[0];
+    let n = 0;
+    forEachSet((kk, ii, x) => {
+      if (kk === k || x.warm || !x.end || x.side === 'R' || (started && x.end > started)) return;
+      if (shareMuscle(S.current.items[kk].name, it.name)) n++;
+    });
+    return n >= PREFATIGUE_SETS;
+  }
+  const stateLabel = (f) => (f === true ? 'pre-fatigued' : f === false ? 'fresh' : '');
+
   /** Earlier sessions of one exercise, newest first; working sets and warm-ups grouped separately. */
   function historyFor(name, variation) {
     const cur = S.current ? S.current.session : '';
@@ -333,6 +377,7 @@
         Object.assign(s, {
           entries: groupSets(s.rows.filter((r) => r.Type !== 'Warm-up')),
           warmups: groupSets(s.rows.filter((r) => r.Type === 'Warm-up')),
+          fatigued: wasFatigued(s.session, name),
         })
       )
       .filter((s) => s.entries.length)
@@ -426,7 +471,23 @@
   const oneArm = (k) => oneArmFor(itemDef(k), S.current.items[k].choices);
   const sidesOf = (k) => (oneArm(k) ? ['L', 'R'] : ['']);
   const varFilter = (k) => (hasOptions(itemDef(k)) ? variationFrom(itemDef(k), S.current.items[k].choices) : '');
-  const lastOf = (k) => historyFor(S.current.items[k].name, varFilter(k))[0] || null;
+  /**
+   * The past workout to go by for this exercise: your last one in the same state (fresh or
+   * pre-fatigued). With none yet, your last one in the other state, marked with the factor that
+   * converts its strength to this state (your own fresh-to-tired ratio).
+   */
+  function refFor(k) {
+    const hs = historyFor(S.current.items[k].name, varFilter(k));
+    if (!hs.length) return null;
+    const st = liveFatigued(k);
+    const same = hs.find((h) => h.fatigued === st || h.fatigued == null);
+    if (same) return { s: same, same: true, factor: 1 };
+    return { s: hs[0], same: false, factor: st ? fatigueRatio() : 1 / fatigueRatio() };
+  }
+  const lastOf = (k) => {
+    const r = refFor(k);
+    return r ? r.s : null;
+  };
   const workRows = (it) => it.sets.filter((s) => !s.warm).length;
   const warmRows = (it) => it.sets.filter((s) => s.warm).length;
   const unitsOf = (k) => Math.ceil(workRows(S.current.items[k]) / sidesOf(k).length);
@@ -649,9 +710,14 @@
       const step = num(it.cfg.step) || 2.5;
       return { kg: start ? Math.round((start - step * (j + 1)) * 100) / 100 : null, reps: pd ? pd.reps : null, partials: pd ? pd.partials : null };
     }
-    // The same drop as the set before once it's done, else last time's same drop, else carry on the step down.
+    // The same drop as the set before once it's done; else last time's same drop, scaled by how
+    // today's weight compares with last time's; else carry on the step down.
     const src = carrySource(k, i);
-    let kg = src && src.drops[j] && num(src.drops[j].kg) != null ? num(src.drops[j].kg) : pd ? pd.kg : null;
+    let kg = src && src.drops[j] && num(src.drops[j].kg) != null ? num(src.drops[j].kg) : null;
+    if (kg == null && pd && pd.kg != null) {
+      const main = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
+      kg = p.kg && main && main !== p.kg ? snapKg(it.name, pd.kg * (main / p.kg), pd.kg) : pd.kg;
+    }
     if (kg == null && j > 0) {
       const at = (jj) => (jj < 0 ? (num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg) : num(s.drops[jj].kg) != null ? num(s.drops[jj].kg) : dropPlaceholder(k, i, jj).kg);
       const a = at(j - 1);
@@ -705,11 +771,15 @@
       }
       return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
     }
-    // Weight hint: the set before once it's done, else last time's same set,
-    // else the set before (same side), else last time's final set.
+    // Weight hint: the set before once it's done; else the weight suggested from your history
+    // (suggestKg); else the set before (same side); else your last workout's final set.
     const src = wantsKg(s) ? carrySource(k, i) : null;
     let kg = src && num(src.kg) != null ? num(src.kg) : null;
-    if (kg == null && p && wantsKg(s) && (!def.bodyweight || p.variation === 'Weighted')) kg = p.kg;
+    let reps = p ? p.reps : null;
+    if (kg == null && wantsKg(s)) {
+      const sug = suggestKg(k, i, p);
+      if (sug) [kg, reps] = [sug.kg, sug.reps];
+    }
     if (kg == null) {
       for (let j = i - 1; j >= 0 && kg == null; j--) {
         const x = it.sets[j];
@@ -722,7 +792,86 @@
       const pool = last.entries.filter((e) => e.kg != null && (!def.bodyweight || e.variation === 'Weighted'));
       if (pool.length) kg = pool[pool.length - 1].kg;
     }
-    return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
+    return { kg, reps, partials: p ? p.partials : null };
+  }
+
+  // ---------- Suggested weights ----------
+  const midOf = (xs) => {
+    const v = xs.slice().sort((a, b) => a - b);
+    const m = Math.floor(v.length / 2);
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+  };
+  /** How much weaker you are pre-fatigued than fresh: from your own workouts (the middle across exercises), else 0.9. */
+  function fatigueRatio() {
+    if (memoHist.has('fatigueRatio')) return memoHist.get('fatigueRatio');
+    const ratios = [];
+    [...new Set(allSets().map((r) => r.Exercise))]
+      .filter((n) => !exDef(n).bodyweight)
+      .forEach((name) => {
+        const def = exDef(name);
+        const hs = historyFor(name, '');
+        const top = (f) => hs.filter((h) => h.fatigued === f).map((h) => score(h.entries, def).value).filter((v) => v > 0);
+        const fresh = top(false);
+        const tired = top(true);
+        if (fresh.length && tired.length) ratios.push(midOf(tired) / midOf(fresh));
+      });
+    const r = ratios.length ? Math.min(1, Math.max(0.75, midOf(ratios))) : 0.9;
+    memoHist.set('fatigueRatio', r);
+    return r;
+  }
+  /** The weight steps you use on an exercise (the smallest gap between weights you've logged), 1–5 kg. */
+  function kgStep(name) {
+    const key = `step|${name}`;
+    if (memoHist.has(key)) return memoHist.get(key);
+    const ws = [...new Set(allSets().filter((r) => r.Exercise === name && !num(r.Drop) && num(r.kg) > 0).map((r) => num(r.kg)))].sort((a, b) => a - b);
+    const gaps = ws.slice(1).map((w, n) => Math.round((w - ws[n]) * 100) / 100).filter((d) => d >= 0.5);
+    const step = gaps.length ? Math.min(5, Math.max(1, Math.min(...gaps))) : 2.5;
+    memoHist.set(key, step);
+    return step;
+  }
+  /** Rounds to a weight you'd actually load: steps of kgStep away from a weight you've used. */
+  const snapKg = (name, kg, base) => {
+    const step = kgStep(name);
+    return Math.max(step, Math.round((base + Math.round((kg - base) / step) * step) * 100) / 100);
+  };
+  /** Your usual reps on this set: the middle of your last few workouts in the same state (else any). */
+  function usualReps(k, i) {
+    const it = S.current.items[k];
+    const s = it.sets[i];
+    const no = setNo(k, i);
+    const hs = historyFor(it.name, varFilter(k));
+    const st = liveFatigued(k);
+    const same = hs.filter((h) => h.fatigued === st || h.fatigued == null);
+    const reps = (same.length >= 2 ? same : hs)
+      .slice(0, 5)
+      .map((h) => h.entries.find((e) => e.set === no))
+      .filter(Boolean)
+      .map((e) => (s.side === 'R' ? e.repsR : e.reps))
+      .filter((x) => x != null && x > 0);
+    return reps.length ? Math.round(midOf(reps)) : null;
+  }
+  /**
+   * The weight to try on a set, from your history (p = that set in the workout refFor picked):
+   * - your strength there (estimated 1-rep max from its weight and reps), converted to today's
+   *   state if that workout was in the other one (fresh vs pre-fatigued);
+   * - the weight you'd get your usual reps on this set with: beat your usual reps last time and it
+   *   steps up, fall short and it steps down;
+   * - kept within -15% / +10% of last time, and snapped to the weights you use.
+   * Added-weight exercises (pull-ups, landmine) just carry the weight over, converted if needed.
+   * Returns { kg, reps } (reps: the target that goes with the weight) or null.
+   */
+  function suggestKg(k, i, p) {
+    const it = S.current.items[k];
+    const def = exDef(it.name);
+    const ref = refFor(k);
+    if (!ref || !p || !p.kg || (def.bodyweight && p.variation !== 'Weighted')) return null;
+    const base = p.kg * ref.factor;
+    if (def.bodyweight || def.kgLabel) return { kg: snapKg(it.name, base, p.kg), reps: p.reps };
+    const usual = usualReps(k, i) || p.reps;
+    let kg = p.reps && usual ? (e1rm(p.kg, p.reps) * ref.factor) / (1 + usual / 30) : base;
+    kg = Math.min(Math.max(kg, base * 0.85), base * 1.1);
+    const out = snapKg(it.name, kg, p.kg);
+    return { kg: out, reps: out === p.kg ? p.reps : usual };
   }
 
   function compareSet(k, i) {
@@ -730,6 +879,9 @@
     const def = exDef(it.name);
     const s = it.sets[i];
     if (s.warm) return null;
+    // Only against a past workout where this exercise was in the same state (fresh or pre-fatigued).
+    const ref = refFor(k);
+    if (!ref || !ref.same) return null;
     const p = sideEntry(k, i);
     if (!p) return null;
     if (def.bodyweight && variationOf(k, s) !== (p.variation || 'Bodyweight')) return null;
@@ -737,71 +889,10 @@
     return cmp(kg, num(s.reps), p.kg, p.reps);
   }
 
-  // ---------- Personal records and targets ----------
+  // Estimated 1-rep max (Epley), and the reps that count for a set (the weaker side for one-arm sets).
   const e1rm = (kg, reps) => (kg && reps ? kg * (1 + reps / 30) : 0);
   const repsOf = (e) => (e.repsR != null ? Math.min(e.reps || 0, e.repsR || 0) : e.reps);
-  function entryOf(k, i) {
-    const s = S.current.items[k].sets[i];
-    const def = itemDef(k);
-    return { kg: def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg), reps: num(s.reps), repsR: null, variation: variationOf(k, s) };
-  }
-  function addToBests(b, e, def) {
-    const reps = repsOf(e);
-    if (!reps || reps <= 0) return;
-    if (def.bodyweight) {
-      const v = e.variation || 'Bodyweight';
-      if (v === 'Bodyweight') {
-        b.bwReps = Math.max(b.bwReps, reps);
-        return;
-      }
-      if (v !== 'Weighted') return;
-    }
-    if (!e.kg || e.kg <= 0) return;
-    b.kg = b.kg == null ? e.kg : Math.max(b.kg, e.kg);
-    if (!def.bodyweight) b.e1rm = Math.max(b.e1rm, e1rm(e.kg, reps));
-    b.pairs.push([e.kg, reps]);
-  }
-  function historyBests(name, variation) {
-    const key = `best|${name}|${variation || ''}|${S.current ? S.current.session : ''}`;
-    if (memoHist.has(key)) return memoHist.get(key);
-    const def = exDef(name);
-    const b = { kg: null, e1rm: 0, pairs: [], bwReps: 0, any: false };
-    historyFor(name, variation).forEach((s) =>
-      s.entries.forEach((e) => {
-        b.any = true;
-        addToBests(b, e, def);
-      })
-    );
-    memoHist.set(key, b);
-    return b;
-  }
-  /** Which records a finished working set broke: against earlier sessions and earlier sets today. */
-  function prsFor(k, i) {
-    const it = S.current.items[k];
-    const s = it.sets[i];
-    const def = exDef(it.name);
-    if (s.warm || !s.end) return [];
-    const base = historyBests(it.name, varFilter(k));
-    if (!base.any) return [];
-    const b = { kg: base.kg, e1rm: base.e1rm, pairs: base.pairs.slice(), bwReps: base.bwReps };
-    forEachSet((kk, ii, x) => {
-      if (x === s || x.warm || !x.end || x.end > s.end) return;
-      if (S.current.items[kk].name !== it.name || varFilter(kk) !== varFilter(k)) return;
-      addToBests(b, entryOf(kk, ii), def);
-    });
-    const e = entryOf(k, i);
-    const reps = repsOf(e);
-    if (!reps) return [];
-    const out = [];
-    const v = e.variation || 'Bodyweight';
-    if (def.bodyweight && v === 'Bodyweight') return b.bwReps && reps > b.bwReps ? ['most reps'] : [];
-    if ((def.bodyweight && v !== 'Weighted') || !e.kg) return [];
-    if (b.kg != null && e.kg > b.kg) out.push('heaviest');
-    else if (!def.bodyweight && b.e1rm && e1rm(e.kg, reps) > b.e1rm + 0.05) out.push('best est. 1RM');
-    const atOrAbove = b.pairs.filter((p) => p[0] >= e.kg);
-    if (atOrAbove.length && reps > Math.max(...atOrAbove.map((p) => p[1]))) out.push(`most reps at ${fmt(e.kg)} kg`);
-    return out;
-  }
+
   // ---------- Sheet rows ----------
   const dropBase = (s, d) => `${s.id}-${d.id}`;
   /** Every sheet row id a set can own: its own row plus one per drop. */
@@ -958,18 +1049,6 @@
     const el = document.getElementById('ft-' + s.id);
     const b = blockOf(k);
     if (el) el.outerHTML = footerHtml(k, i, b && b.keys.length > 1);
-    announcePr(k, i);
-  }
-  function announcePr(k, i) {
-    const it = S.current.items[k];
-    const s = it.sets[i];
-    const prs = prsFor(k, i);
-    const sig = prs.join('|');
-    if (prs.length && s.prSig !== sig) {
-      s.prSig = sig;
-      persist();
-      toast(`New PR On ${it.name}: ${prs.join(', ')}`);
-    }
   }
 
   // ---------- Start, end and undo a set ----------
@@ -1034,7 +1113,6 @@
     persist();
     render();
     scheduleSync();
-    announcePr(k, i);
     const reps = document.querySelector(`.set-row [data-k="${k}"][data-i="${i}"][data-f="reps"]`);
     if (reps && !reps.value && !s.warm) reps.focus();
   }
@@ -2198,15 +2276,13 @@
     </div>`;
   }
 
-  /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
+  /** The line under a set: up/down vs your last like-for-like workout, set and rest times, and "+ Drop". */
   function footerHtml(k, i, label) {
     const it = S.current.items[k];
     const s = it.sets[i];
     const a = `data-k="${k}" data-i="${i}"`;
     let inner = '';
     if (s.end && !s.warm) {
-      const prs = prsFor(k, i);
-      if (prs.length) inner += `<span class="pr">${ICON.trophy}PR · ${esc(prs.join(' · '))}</span>`;
       const m = compareSet(k, i);
       if (m) inner += `<span class="mk ${m.dir > 0 ? 'up' : m.dir < 0 ? 'down' : 'same'}">${m.dir > 0 ? '▲' : m.dir < 0 ? '▼' : '='} ${esc(m.text)}</span>`;
     }
@@ -2379,22 +2455,22 @@
 
   function finishModal() {
     const st = sessionStats();
+    // Up/down only counts sets that had a like-for-like workout to compare with (same fresh/pre-fatigued state).
     let ups = 0;
-    const prList = [];
+    let downs = 0;
     forEachSet((k, i, s) => {
       if (!s.end || s.warm) return;
       const m = compareSet(k, i);
       if (m && m.dir > 0) ups++;
-      const prs = prsFor(k, i);
-      if (prs.length) prList.push(`${S.current.items[k].name} (${prs.join(', ')})`);
+      if (m && m.dir < 0) downs++;
     });
     const total = st.first ? Math.max(60, (st.last - st.first) / 1000) : 0;
     const run = runningSet();
+    const vs = [ups ? `▲ ${ups} set${ups === 1 ? '' : 's'} up` : '', downs ? `▼ ${downs} down` : ''].filter(Boolean).join(' · ');
     return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
       <h2 id="mt">Finish ${esc(S.current.day)}?</h2>
-      ${statTiles({ total, work: st.work, rest: st.rest, sets: st.sets }, [[prList.length, 'PRs', prList.length > 0]])}
-      ${ups ? `<p class="small">▲ Beat last time on ${ups} set${ups === 1 ? '' : 's'}.</p>` : ''}
-      ${prList.length ? `<p class="small"><b>New PRs:</b> ${esc(prList.join(' · '))}</p>` : ''}
+      ${statTiles({ total, work: st.work, rest: st.rest, sets: st.sets })}
+      ${vs ? `<p class="small">${vs} on your last like-for-like workout.</p>` : ''}
       ${issuesHtml(workoutIssues(liveCheckSets()), 'finish')}
       ${run ? '<p class="muted small">The set that’s running will be ended now.</p>' : ''}
       ${st.any || run ? '' : '<p class="muted">No sets finished, so nothing will be saved.</p>'}
@@ -2449,6 +2525,24 @@
     }
     return { value: entries.reduce((a, e) => a + (e.reps || 0) + (e.repsR || 0), 0), label: 'Total Reps Per Session', hint: 'All reps across the session added together.' };
   }
+  /** Straight-line fit through the last 8 weeks of points (oldest first): the % change and its start date. */
+  function trend(pts) {
+    if (pts.length < 2) return null;
+    const day = (p) => new Date(p.date).getTime() / 86400000;
+    const end = day(pts[pts.length - 1]);
+    let use = pts.filter((p) => end - day(p) <= 56);
+    if (use.length < 2) use = pts.slice(-2);
+    const xs = use.map(day);
+    const ys = use.map((p) => p.value);
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const sxx = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+    if (!sxx) return null;
+    const slope = xs.reduce((a, x, n) => a + (x - mx) * (ys[n] - my), 0) / sxx;
+    const start = my + slope * (xs[0] - mx);
+    if (!(start > 0)) return null;
+    return { pct: Math.round(((slope * (xs[xs.length - 1] - xs[0])) / start) * 100), since: use[0].date };
+  }
   function chartSvg(pts) {
     const W = Math.round(Math.max(280, Math.min(608, window.innerWidth - 64)));
     const H = 190;
@@ -2474,10 +2568,14 @@
       s += `<line x1="${L}" x2="${W - R}" y1="${r1(y(t))}" y2="${r1(y(t))}" class="grid"/>`;
       s += `<text x="${L - 6}" y="${r1(y(t) + 4)}" class="axis" text-anchor="end">${fmt(Math.round(t * 10) / 10)}</text>`;
     });
-    if (pts.length > 1) s += `<polyline class="line" points="${pts.map((p, i) => `${r1(x(i))},${r1(y(p.value))}`).join(' ')}"/>`;
+    // One line for fresh workouts, one (dashed) for pre-fatigued ones, on a shared timeline.
+    [false, true].forEach((tired) => {
+      const idx = pts.map((p, i) => i).filter((i) => !!pts[i].fatigued === tired);
+      if (idx.length > 1) s += `<polyline class="line${tired ? ' tired' : ''}" points="${idx.map((i) => `${r1(x(i))},${r1(y(pts[i].value))}`).join(' ')}"/>`;
+    });
     pts.forEach((p, i) => {
       const last = i === pts.length - 1;
-      s += `<circle class="dot${last ? ' last' : ''}" cx="${r1(x(i))}" cy="${r1(y(p.value))}" r="${last ? 5 : 3.5}"><title>${esc(niceDate(p.date))}: ${fmt(p.value)}</title></circle>`;
+      s += `<circle class="dot${p.fatigued ? ' tired' : ''}${last ? ' last' : ''}" cx="${r1(x(i))}" cy="${r1(y(p.value))}" r="${last ? 5 : 3.5}"><title>${esc(niceDate(p.date))}${p.fatigued ? ' (pre-fatigued)' : ''}: ${fmt(p.value)}</title></circle>`;
     });
     s += `<text x="${L}" y="${H - 6}" class="axis">${esc(niceDate(pts[0].date))}</text>`;
     if (pts.length > 1) s += `<text x="${W - R}" y="${H - 6}" class="axis" text-anchor="end">${esc(niceDate(pts[pts.length - 1].date))}</text>`;
@@ -2513,7 +2611,7 @@
     const reps = [...byKg.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
     if (reps.length > 1) rows.push(['Rep Records', reps.map(([kg, r]) => `${plus}${fmt(kg)}×${r.reps}`).join(' · '), '']);
     if (!rows.length) return '';
-    return `<section class="panel"><h2>${ICON.trophy}Records</h2><ul class="records">${rows
+    return `<section class="panel"><h2>All-Time Bests</h2><ul class="records">${rows
       .map(([k, v, d]) => `<li><span class="muted">${esc(k)}</span><span><b>${esc(v)}</b>${d ? `<span class="muted small"> · ${esc(niceDate(d))}</span>` : ''}</span></li>`)
       .join('')}</ul></section>`;
   }
@@ -2543,17 +2641,33 @@
     }
     const sessions = historyFor(P.name, P.variation);
     if (!sessions.length) return h + '<section class="panel"><p class="muted">No sets logged for this yet.</p></section>';
-    const pts = sessions.map((s) => Object.assign({ date: s.date }, score(s.entries, def))).reverse();
-    h += `<section class="panel"><div class="chart-title">${esc(pts[0].label)}</div>${chartSvg(pts)}<p class="muted small">${esc(pts[0].hint)}</p></section>`;
+    const pts = sessions.map((s) => Object.assign({ date: s.date, fatigued: s.fatigued === true }, score(s.entries, def))).reverse();
+    // Progress is read per state: your fresh workouts against each other, pre-fatigued against pre-fatigued.
+    const line = (tired) => {
+      const own = pts.filter((p) => p.fatigued === tired);
+      if (!own.length) return '';
+      const t = trend(own);
+      const name = tired ? 'Pre-fatigued' : 'Fresh';
+      if (!t) return `<span><b>${name}</b> ${own.length} workout${own.length === 1 ? '' : 's'} so far</span>`;
+      return `<span><b>${name}</b> <span class="mk ${t.pct > 0 ? 'up' : t.pct < 0 ? 'down' : 'same'}">${t.pct > 0 ? '+' : ''}${t.pct}%</span> since ${esc(niceDate(t.since))}</span>`;
+    };
+    const both = pts.some((p) => p.fatigued) && pts.some((p) => !p.fatigued);
+    h += `<section class="panel"><div class="chart-title">${esc(pts[0].label)}</div>
+      <div class="trend">${line(false)}${line(true)}</div>
+      ${chartSvg(pts)}
+      ${both ? '<div class="legend"><span><i class="key"></i>Fresh</span><span><i class="key tired"></i>Pre-fatigued (after 2+ sets for the same muscles)</span></div>' : ''}
+      <p class="muted small">${esc(pts[0].hint)} The trend is the straight-line fit through your last 8 weeks.</p></section>`;
     h += recordsHtml(sessions, def);
     h += `<h2>History</h2><ul class="list">${sessions
       .map((s, i) => {
-        const prev = sessions[i + 1];
+        // Up/down against the previous workout in the same state.
+        const prev = sessions.slice(i + 1).find((o) => o.fatigued === s.fatigued);
         const d = prev ? score(s.entries, def).value - score(prev.entries, def).value : null;
         const mk = d == null ? '' : `<span class="mk ${d > 0 ? 'up' : d < 0 ? 'down' : 'same'}">${d > 0 ? '▲' : d < 0 ? '▼' : '='}</span>`;
         const v = !def.bodyweight && !P.variation && s.entries[0] && s.entries[0].variation ? ` · ${esc(s.entries[0].variation)}` : '';
+        const st = stateLabel(s.fatigued);
         const ar = avgRest(s.entries);
-        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}</span>${mk}</div>
+        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}${st ? ` <span class="state${s.fatigued ? ' tired' : ''}">${st}</span>` : ''}</span>${mk}</div>
           <div class="muted small">${esc(summary(s.entries, def))}${ar ? ` · rest ~${clock(ar)}` : ''}</div></li>`;
       })
       .join('')}</ul>`;

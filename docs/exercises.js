@@ -16,6 +16,34 @@
 //          | 'ultimate' (drops of `step` kg all the way down to 2.5 kg on every set).
 //          Any set can also get a drop set with "+ Drop Set" while it's the active set.
 //   choices: default picker choices per exercise. modes/band: bodyweight set types per set.
+// Muscles each exercise works hard, main one first. An exercise counts as "pre-fatigued" when two or
+// more working sets earlier in the workout hit any of the same muscles. Then its hints and up/down
+// markers come from your past workouts in the same state. Exercises not listed only count themselves.
+window.TT_MUSCLES = {
+  'Machine Press': ['Chest', 'Triceps', 'Front Delts'],
+  'Incline Smith Bench': ['Chest', 'Front Delts', 'Triceps'],
+  'Core Exercise': ['Abs'],
+  'Landmine Press': ['Front Delts', 'Chest', 'Triceps'],
+  'Pec Deck Fly': ['Chest'],
+  'Shoulder Press': ['Front Delts', 'Side Delts', 'Triceps'],
+  'Dumbbell Pullover': ['Lats', 'Chest'],
+  Tricep: ['Triceps'],
+  'Pull-Up': ['Lats', 'Upper Back', 'Biceps'],
+  'Chin-Up': ['Lats', 'Biceps', 'Upper Back'],
+  'Seated Row': ['Upper Back', 'Lats', 'Rear Delts', 'Biceps'],
+  'Supported Row': ['Upper Back', 'Lats', 'Rear Delts', 'Biceps'],
+  'Lat Pulldown': ['Lats', 'Biceps', 'Upper Back'],
+  'Reverse Fly': ['Rear Delts', 'Upper Back'],
+  Biceps: ['Biceps'],
+  'Face Pull': ['Rear Delts', 'Upper Back'],
+  'Leg Press': ['Quads', 'Glutes'],
+  Calves: ['Calves'],
+  'Hamstring Curl': ['Hamstrings'],
+  'Leg Extension': ['Quads'],
+  Adductor: ['Adductors'],
+  'Lateral Raise': ['Side Delts'],
+};
+
 window.TT_DEFAULTS = {
   version: 4,
   exercises: [
