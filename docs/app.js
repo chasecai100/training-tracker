@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.0';
+  const VERSION = '3.5.1';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -1629,7 +1629,7 @@
     body += `<div class="card-actions">
         <button class="btn small" data-action="add-warm" ${at}>+ Warm-Up</button>
         <button class="btn small" data-action="add-set" ${at}>+ ${sup ? 'Add Round' : 'Add Set'}</button>
-        <button class="btn small ghost" data-action="remove-set" ${at}>Remove Last</button>
+        <button class="btn small ghost" data-action="remove-set" ${at}>− Remove Last</button>
         ${ss}
         <button class="btn small ghost danger" data-action="remove-block" ${at}>Remove Exercise</button>
       </div>`;
@@ -1748,20 +1748,6 @@
     if (sets.some((s) => s.start && !s.end)) return false;
     return sets.findIndex((s) => !s.warm && !s.start && !s.end) === i;
   }
-  /**
-   * The active set gets "+ Drop Set": the one running, the one you just finished, or the next one up.
-   * "Next up" counts warm-ups, so while a warm-up is still to do, no working set is active yet.
-   */
-  function isActiveSet(k, i) {
-    const sets = S.current.items[k].sets;
-    const s = sets[i];
-    if (s.warm) return false;
-    if (s.start && !s.end) return true;
-    if (s.end && s.end === S.current.lastEnd) return true;
-    if (runningSet()) return false;
-    return sets.findIndex((x) => !x.start && !x.end) === i;
-  }
-
   /** The line under a set: PRs, progress vs last time, set and rest times, the target, and "+ Drop". */
   function footerHtml(k, i, label) {
     const it = S.current.items[k];
@@ -1789,7 +1775,10 @@
     } else if (canDrop(k)) {
       const planned = s.drops.length && s.drops.every((d) => !d.reps) && (it.cfg.style === 'double' || it.cfg.style === 'ultimate');
       if (planned && isJustFinished(k, i)) inner += `<button class="drop-add" data-action="resume-set" ${a}>↺ Continue Into Drop</button>`;
-      else if (it.cfg.style !== 'ultimate' && isActiveSet(k, i)) inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
+      else if (it.cfg.style !== 'ultimate' && !s.warm && isJustFinished(k, i)) {
+        // Only on the set you just finished: tapping it reopens that set for the drop.
+        inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
+      }
     }
     if (it.cfg.style === 'ultimate' && !s.warm && !s.drops.length && !s.end) inner += '<span class="muted">Drops fill in once you enter the weight</span>';
     return `<div class="markers${label ? ' indent' : ''}" id="ft-${s.id}"${inner ? '' : ' hidden'}>${inner}</div>`;
