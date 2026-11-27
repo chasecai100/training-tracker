@@ -73,10 +73,11 @@ A web app for your iPhone and PC.
 - **Each side timed alone:** one-sided exercises get one row per side (1L, 1R, 2L…), each with its own Start/End and rest. In the sheet, both sides share the set number, with Side L or R.
 - **Warm-ups:** feeler sets, not to failure. They're tagged Type = Warm-up and kept out of progress, PRs, set numbering and Excel's 1-rep max and volume.
 - **Set styles:**
-  - **Normal:** working sets only. Any set can still get a drop set: "+ Drop Set" appears on the active set (the one running, the one just finished, or the next one up).
+  - **Normal:** working sets only. A set can still get a drop set: "+ Drop Set" appears under the set you just finished and reopens it, so the drop counts as part of the set rather than rest.
   - **Two-Weight Drop Every Set:** each set has weight 1 and weight 2, and you enter both rep counts after End.
   - **Ultimate Drop Set:** drop rows fill in automatically from your starting weight, going down in fixed steps to a floor per set.
-- **Drops:** each drop is its own row (Drop = 1, 2, 3…) on the same set number. Drops count toward volume, but not toward progress or the 1-rep max.
+- **Drop sets are one continuous set:** one Start, straight through every drop, one End ("End Drop Set"). The rest timer starts at End, and then you enter the reps for the set and every drop.
+- **Drops:** each drop is its own row (Drop = 1, 2, 3…) on the same set number. Drops count toward volume, but not toward progress or the 1-rep max. A drop with no reps entered isn't saved.
 - **Rest timing:**
   - Rest is recorded from the end of one set to the start of the next.
   - The countdown uses the exercise's rest from Workout Setup. In a superset it uses "Rest Between Exercises" within a round. After a warm-up it uses the warm-up rest.

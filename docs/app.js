@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.3';
+  const VERSION = '3.5.4';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -582,6 +582,8 @@
   // ---------- Set styles and drops ----------
   const newDrop = (kg) => ({ id: uid(), kg: kg == null ? '' : fmt(kg), reps: '' });
   const canDrop = (k) => !itemDef(k).bodyweight;
+  /** A working set with drops (planned by the set style, or added with "+ Drop Set"). */
+  const isDropSet = (k, s) => !s.warm && (s.drops || []).length > 0 && canDrop(k);
   const dropUntouched = (s) => !s.start && !s.end && (s.drops || []).every((d) => !d.reps);
 
   /** Adds the drop rows the exercise's set style asks for, without touching rows already in use. */
@@ -1485,10 +1487,12 @@
     if (run) {
       const it = c.items[run.k];
       const tgt = targetText(run.k, run.i, true);
+      const drops = isDropSet(run.k, run.s) ? run.s.drops.length : 0;
+      const how = drops ? `<span class="st-beat">Straight Through ${drops} Drop${drops > 1 ? 's' : ''} · End After The Last · Reps After</span>` : '';
       return `<div id="status" class="status run">
-        <div class="st-main"><span class="st-label">${run.s.warm ? 'Warm-Up' : 'Set'} In Progress · ${esc(it.name)} ${setLabel(run.k, run.i)}</span>
-          <b id="st-time" class="st-big"></b>${tgt ? `<span class="st-beat">Beat ${esc(tgt)}</span>` : ''}</div>
-        <button class="btn solid" data-action="end-running">End Set</button>
+        <div class="st-main"><span class="st-label">${run.s.warm ? 'Warm-Up' : drops ? 'Drop Set' : 'Set'} In Progress · ${esc(it.name)} ${setLabel(run.k, run.i)}</span>
+          <b id="st-time" class="st-big"></b>${how}${tgt ? `<span class="st-beat">Beat ${esc(tgt)}</span>` : ''}</div>
+        <button class="btn solid" data-action="end-running">${drops ? 'End Drop Set' : 'End Set'}</button>
       </div>`;
     }
     if (!c.lastEnd) return '<div id="status" class="status idle"><div class="st-main"><span class="st-label">Ready · Tap Start On Your First Set</span></div></div>';
@@ -1814,10 +1818,12 @@
     const d = s.drops[j];
     const ph = dropPlaceholder(k, i, j);
     const a = `data-k="${k}" data-i="${i}" data-d="${j}"`;
+    // Once the set is done, the keyboard's next button goes reps to reps, skipping the weights.
+    const skip = s.end ? ' tabindex="-1"' : '';
     return `<div class="drop-row ${partialsOn(k) ? 'np' : 'normal'}${label ? ' labeled' : ''}${s.end ? ' done' : ''}">
       <span class="drop-mark" aria-hidden="true">↳</span>
-      <input data-f="kg" ${a} value="${esc(kgShown(d.kg, ph.kg, activeRow(k) === i))}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg">
-      <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button>
+      <input data-f="kg" ${a} value="${esc(kgShown(d.kg, ph.kg, activeRow(k) === i))}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg"${skip}>
+      <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}"${skip}>✕</button>
       <input data-f="reps" ${a} value="${esc(d.reps)}" placeholder="${ph.reps == null ? '' : esc(ph.reps)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} reps"${s.end ? '' : ' disabled'}>
       ${partialsOn(k) ? '<span></span>' : ''}
     </div>`;
@@ -1853,9 +1859,13 @@
     if (s.warm) {
       if (!s.start && !s.end) inner += `<button class="link tiny-x" data-action="warm-remove" ${a}>✕ Remove Warm-Up</button>`;
     } else if (canDrop(k)) {
-      const planned = s.drops.length && s.drops.every((d) => !d.reps) && (it.cfg.style === 'double' || it.cfg.style === 'ultimate');
-      if (planned && isJustFinished(k, i)) inner += `<button class="drop-add" data-action="resume-set" ${a}>↺ Continue Into Drop</button>`;
-      else if (it.cfg.style !== 'ultimate' && !s.warm && isJustFinished(k, i)) {
+      if (isDropSet(k, s)) {
+        // A drop set is one continuous set: one Start and End around every drop, then all the reps.
+        if (s.start && !s.end) inner += '<span class="muted">Go straight through every drop, then tap End</span>';
+        else if (!s.start && activeRow(k) === i) inner += '<span class="muted">One continuous set · Start, go through every drop, End, then enter the reps</span>';
+        else if (s.end && s.drops.some((d) => d.reps === '')) inner += '<span class="muted">Enter the reps for each drop you did</span>';
+      }
+      if ((it.cfg.style || 'normal') === 'normal' && isJustFinished(k, i)) {
         // Only on the set you just finished: tapping it reopens that set for the drop.
         inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
       }
@@ -2417,11 +2427,6 @@
         const offset = header ? header.getBoundingClientRect().height : 0;
         window.scrollBy(0, card.getBoundingClientRect().top - offset - 8);
       }
-    },
-    'resume-set'(el) {
-      resumeIfJustFinished(el.dataset.k, +el.dataset.i);
-      persist();
-      render();
     },
     'drop-remove'(el) {
       const k = el.dataset.k;
