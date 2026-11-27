@@ -17,8 +17,8 @@
 //          Any set can also get a drop set with "+ Drop Set" while it's the active set.
 //   choices: default picker choices per exercise. modes/band: bodyweight set types per set.
 // Muscles each exercise works hard, main one first. An exercise counts as "pre-fatigued" when two or
-// more working sets earlier in the workout hit any of the same muscles. Then its hints and up/down
-// markers come from your past workouts in the same state. Exercises not listed only count themselves.
+// more working sets earlier in the workout hit any of the same muscles. Then its weight suggestions
+// come from your past workouts in the same state. Exercises not listed only count themselves.
 window.TT_MUSCLES = {
   'Machine Press': ['Chest', 'Triceps', 'Front Delts'],
   'Incline Smith Bench': ['Chest', 'Front Delts', 'Triceps'],

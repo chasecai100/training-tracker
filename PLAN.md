@@ -30,25 +30,28 @@ A web app for your iPhone and PC.
 2. **Workout:**
    - **Pinned top bar:** the total workout time, plus a big countdown to your next set. While a set is running, it shows the set timer instead.
    - **Set rows:** each row reads set number, then weight, then Start/End, then reps. Reps (and partials) unlock once you tap End.
-   - **Weight carry-over:** when a set finishes, the sets after it hint its weight (and drop weights). Hints show dim, except on the row you're on, where the hint shows white as the value. Tapping a white hint selects it so typing replaces it, and an unchanged hint is saved when you tap End.
-   - **On each exercise:** a closed card is just its name. Opening it shows its note (read-only), type pickers, up/same/down markers (like for like), warm-up rows (W1…) and drop rows. There's no "Last time" or "To Beat" line; the dim hints in the boxes are the suggested weights and reps.
+   - **Suggested weights and reps:** every weight and reps box hints a suggestion (see Suggested weights below). When you type a finished set's reps, the sets after it update straight away. Hints show dim, except on the row you're on, where the weight hint shows white as the value. Tapping a white hint selects it so typing replaces it, and an unchanged hint is saved when you tap End. If you type a different weight, the reps hint changes to what you'd get with it.
+   - **Why it moved:** when the next set's suggested weight differs from the set before (or from last time), one short line under it says why, e.g. "Up to 65 kg: you'd get about 16 at 62.5 kg, over your 12–15".
+   - **On each exercise:** a closed card is just its name. Opening it shows its note (read-only), type pickers, warm-up rows (W1…) and drop rows. There are no up/down markers and no "Last time" or "To Beat" line; the hints in the boxes are the suggestions.
    - **Fix Time:** under each finished set, "set 0:42 · rest 2:00 ✎" opens Fix Set Time. A working set under 5 seconds shows "Forgot Start? Fix Time" instead.
      - A longer time moves the set's start earlier and takes it off the rest before.
      - A shorter time moves its end earlier and adds it to the rest after.
      - "Use Your Usual" fills in your typical set time for that exercise.
      - Past workouts have the same thing in Edit.
    - **Reorder** (Do Next, ↑ ↓, save the order), and **search** to add or create any exercise.
-   - **Finish:** shows total, working and rest minutes, working sets and estimated calories, plus how many sets went up or down against your last like-for-like workout. Save Workout then opens the workout's summary page, where Edit fixes anything logged wrong.
+   - **Finish:** shows total, working and rest minutes, working sets and estimated calories. Save Workout then opens the workout's summary page, where Edit fixes anything logged wrong.
    - **Workout check:** it runs by itself in the Finish dialog and on a workout's summary page.
      - **Fixed with one tap (Fix, or Fix All):** a set of a few seconds (Start tapped late), or one far longer than the exercise's other sets (End tapped late; over 2.5× and 2 minutes more). The set gets the middle of that exercise's other set times in the workout, else your usual time. A late Start never takes more than the rest before it.
      - **Only pointed out:** a working set with no reps, or a weight (2.5× off) or rep count (25+ and 3× the others) far from your other sets, a likely typo.
-3. **Exercises:** each exercise's note (edit it here), progress chart, records and history.
+3. **Exercises:** each exercise's note (edit it here), progress chart, Suggestions, records and history.
+   - **Suggestions:** the exercise's own rep range (or Default), what set 1 would suggest next time fresh and pre-fatigued, and what the app has learned: how much weaker each set gets than the one before, how much weaker you are pre-fatigued, and the weight step.
 4. **Settings:**
    - **Timer And Sound:** default rest, rest after warm-ups, a choice of rest-over sound with test buttons, and keep the screen on.
    - **Options:**
     - **Supersets**, off by default: shows the "Superset With…" options.
     - **Partial Reps**, on by default: shows the Partial Reps switch on each exercise card. When it's off, partial reps are hidden everywhere.
-    - **Body Weight (Kg):** used for estimated calories (MET method: about 6 METs while lifting, 2 between sets). Blank hides calories.
+    - **Body Weight (Kg):** used for estimated calories (MET method: about 6 METs while lifting, 2 between sets), and for weighted pull-up and chin-up suggestions (70 kg is assumed until it's set). Blank hides calories.
+   - **Weight Suggestions:** the default rep range, 12 to 15. Each exercise can have its own on the Exercises tab.
    - **Workout Setup:** every exercise on each day, with its own sets, warm-ups, rest, set style, default types, and bodyweight/band per set.
    - **New Exercise.**
 
@@ -106,22 +109,27 @@ A web app for your iPhone and PC.
   - The state comes from set start times, so no extra Sheet columns are needed.
   - Incline after Machine Press counts as pre-fatigued; Incline after Leg Press counts as fresh.
 - **Progress, like for like:**
-  - **Up** means heavier, or the same weight for more reps.
-  - The ▲▼ markers under a set, and the "up/down" line at Finish, only compare against your last workout where that exercise was in the same state.
-  - With no such workout yet, there's no marker.
   - The Exercises chart draws fresh and pre-fatigued workouts as separate lines, each with its trend: the straight-line fit over the last 8 weeks, e.g. "Fresh +6% since Oct 3".
   - History rows are tagged fresh or pre-fatigued.
-  - All-time bests stay on the Exercises tab as a reference. There are no PR badges.
-- **Suggested weights** (the hint in the weight box):
-  1. **During a workout:** once a set is done, the next set suggests the same weight.
-  2. **First set of an exercise:** the suggestion comes from your last workout with that exercise in the same state.
-     - It converts that set's weight and reps to an estimated 1-rep max, then finds the weight you'd get your usual reps with (the middle of your last few workouts).
-     - Beat your usual reps last time and it steps up; fall short and it steps down.
-     - The reps hint is your usual reps whenever the weight changed.
-  3. **No workout in the same state yet:** it scales your last workout by your own fresh-to-tired ratio, learned from exercises you've done both ways (0.9 until there's data).
-  4. **Limits:** it stays within -15% / +10% of last time and snaps to the weight steps you use on that exercise.
-  5. **Added-weight exercises** (pull-ups, landmine) just carry the weight over.
-  6. **Drop weights** scale with the main weight.
+  - All-time bests stay on the Exercises tab as a reference. There are no PR badges and no up/down markers.
+- **Suggested weights** (the hints in the weight and reps boxes). Everything runs on one estimate of your strength for the set: an estimated 1-rep max (Epley: weight × (1 + reps ÷ 30)), which puts any weight and reps on the same scale.
+  1. **Rep range:** 12–15 by default (Settings), or the exercise's own (Exercises tab).
+  2. **Before you've done a set of the exercise today** (from your history): it uses your last 4 workouts with that exercise in today's state, for that set number.
+     - The latest counts most, and each workout further back counts half as much. A good day counts in full; one bad day only pulls you down halfway.
+     - More than 3 weeks since you last did it: it eases off 1% a week, up to 8%.
+     - It's double progression: at last time's weight it aims for one more rep, until that reaches the top of your range. Then the weight goes up to the heaviest that still gets you one rep inside the range (13 for 12–15). If a step up would drop you more than a rep under the range, you add reps first.
+     - Under the range, the weight comes down only as far as it takes to get back in.
+  3. **During a workout:** each set follows the set you just did. That set's weight and reps give today's strength, less how much you usually drop off from one set to the next on that exercise.
+     - The drop-off is learned from back-to-back sets in your last 10 workouts of it. It starts at 4% and settles as you log more.
+     - The weight stays while the reps you'd get are still inside your range. Over it, the weight goes up to the heaviest that gets you near the top (14 for 12–15), so it lasts a couple of sets. Under it, it comes down only as far as it takes to get back in.
+     - The sets after the next one chain on from it, so the whole exercise updates as you go.
+     - Until you type a finished set's reps, its weight carries to the next set.
+     - One-arm sets: the right side keeps the left side's weight within a set.
+  4. **No workout in today's state yet:** it converts from the other state with your fresh-to-tired ratio for that exercise. That's learned from your last few workouts each way, weighed against the ratio across all your exercises (0.9 until there's data).
+  5. **Limits:** a suggestion moves at most +15% or −20% from the weight it starts from (always at least one step). Weights move in your usual step for that exercise: the most common gap between weights you've logged, once it's come up twice; until then 2.5 kg.
+  6. **Added weight:** weighted pull-ups and chin-ups use your body weight plus the added weight. Landmine Press adds about 10 kg for the bar's share.
+  7. **Bodyweight and band sets:** reps only, following the set before less your usual drop-off, else last time's.
+  8. **Drop weights** keep their share of the set's weight when that changes.
 - **Notes:** one per exercise, stored in the sheet's Notes tab. Edit them in Exercises; a workout only shows them on an open exercise.
 - **Old names:** history logged under earlier names (Pull-up, Triceps, Tricep Overhead Extension, Ab Raise…) is read under today's names, so history, suggestions and notes carry over.
 

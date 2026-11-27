@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.9.0';
+  const VERSION = '4.0.0';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -166,7 +166,7 @@
   let notice = '';
   const S = {
     settings: Object.assign(
-      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false, partials: true, bodyKg: 0 },
+      { pass: '', restSec: 120, warmRest: 60, sound: 'bleep', keepAwake: true, supersets: false, partials: true, bodyKg: 0, repMin: 12, repMax: 15, repRanges: {} },
       load(KEYS.settings, {})
     ),
     library: loadLibrary(),
@@ -314,8 +314,8 @@
   // ---------- Fresh or pre-fatigued ----------
   // How hard an exercise was done depends on what came before it in the workout: Incline after
   // Machine Press is weaker than Incline first. So each exercise in each workout is either "fresh"
-  // or "pre-fatigued" (2+ working sets earlier in the workout hit any of its muscles), and hints and
-  // up/down markers compare against past workouts in the same state.
+  // or "pre-fatigued" (2+ working sets earlier in the workout hit any of its muscles), and weight
+  // suggestions and progress charts go by past workouts in the same state.
   const PREFATIGUE_SETS = 2;
   const musclesOf = (name) => (window.TT_MUSCLES && window.TT_MUSCLES[name]) || [name];
   const shareMuscle = (a, b) => musclesOf(a).some((m) => musclesOf(b).includes(m));
@@ -447,17 +447,6 @@
   function avgRest(entries) {
     const r = entries.map((e) => e.rest).filter((x) => x != null && x > 0);
     return r.length ? r.reduce((a, b) => a + b, 0) / r.length : null;
-  }
-  function cmp(kg, reps, pkg, preps) {
-    if (reps == null || preps == null) return null;
-    const a = kg || 0;
-    const b = pkg || 0;
-    if (a !== b) return { dir: a > b ? 1 : -1, text: `${a > b ? '+' : '−'}${fmt(Math.abs(a - b))} kg` };
-    if (reps !== preps) {
-      const d = reps - preps;
-      return { dir: Math.sign(d), text: `${d > 0 ? '+' : '−'}${Math.abs(d)} rep${Math.abs(d) === 1 ? '' : 's'}` };
-    }
-    return { dir: 0, text: 'same' };
   }
 
   // ---------- Workout model ----------
@@ -698,53 +687,56 @@
     S.current.items[k].sets.forEach((x, n) => !x.start && !x.end && regenUltimate(k, n));
   }
 
-  /** Hints for a drop: last time's same drop, else carry on the step down. */
+  /** Hints for a drop: the same drop as the set before, else last time's, in proportion to today's weight; else carry on the step down. */
   function dropPlaceholder(k, i, j) {
     const it = S.current.items[k];
     const s = it.sets[i];
     const p = sideEntry(k, i);
     const pd = p && p.drops[j];
+    const main = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
+    const reps = pd ? pd.reps : null;
+    const partials = pd ? pd.partials : null;
     if (it.cfg.style === 'ultimate') {
       // The ladder: step down from the set's weight.
-      const start = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
       const step = num(it.cfg.step) || 2.5;
-      return { kg: start ? Math.round((start - step * (j + 1)) * 100) / 100 : null, reps: pd ? pd.reps : null, partials: pd ? pd.partials : null };
+      return { kg: main ? Math.round((main - step * (j + 1)) * 100) / 100 : null, reps, partials };
     }
-    // The same drop as the set before once it's done; else last time's same drop, scaled by how
-    // today's weight compares with last time's; else carry on the step down.
-    const src = carrySource(k, i);
-    let kg = src && src.drops[j] && num(src.drops[j].kg) != null ? num(src.drops[j].kg) : null;
-    if (kg == null && pd && pd.kg != null) {
-      const main = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
-      kg = p.kg && main && main !== p.kg ? snapKg(it.name, pd.kg * (main / p.kg), pd.kg) : pd.kg;
+    // A drop keeps its share of the set's weight when that changes (40 then 30 becomes 45 then 35ish).
+    const step = kgStep(it.name, varFilter(k));
+    const scale = (dkg, from) => (main && from && Math.abs(main - from) > 1e-9 ? snapTo(dkg * (main / from), dkg, step) : dkg);
+    let kg = null;
+    const pr = prevRow(k, i);
+    const x = pr && it.sets[pr.j].mode === s.mode ? it.sets[pr.j] : null;
+    if (x && x.drops[j]) {
+      const own = num(x.drops[j].kg);
+      const dkg = own != null ? own : x.end ? null : dropPlaceholder(k, pr.j, j).kg;
+      const from = num(x.kg) != null ? num(x.kg) : placeholder(k, pr.j).kg;
+      if (dkg != null) kg = scale(dkg, from);
     }
+    if (kg == null && pd && pd.kg != null) kg = scale(pd.kg, p.kg);
     if (kg == null && j > 0) {
-      const at = (jj) => (jj < 0 ? (num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg) : num(s.drops[jj].kg) != null ? num(s.drops[jj].kg) : dropPlaceholder(k, i, jj).kg);
+      const at = (jj) => (jj < 0 ? main : num(s.drops[jj].kg) != null ? num(s.drops[jj].kg) : dropPlaceholder(k, i, jj).kg);
       const a = at(j - 1);
       const b = at(j - 2);
       if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
     }
-    return { kg, reps: pd ? pd.reps : null, partials: pd ? pd.partials : null };
+    return { kg, reps, partials };
   }
 
   /**
-   * The finished set a row takes its weights from: the set before it on the same side once that's
-   * done, or for the first set of a side, the set just before it (the other side) once that's done.
+   * The row a set follows: the working row before it on the same side ({ j, gap: 1 }), or for the
+   * first right-side set, the left side of the same set ({ j, gap: 0 }).
    */
-  function carrySource(k, i) {
+  function prevRow(k, i) {
     const sets = S.current.items[k].sets;
-    const s = sets[i];
-    if (s.warm) return null;
-    let same = null;
+    const side = sets[i].side || '';
     let any = null;
-    for (let j = i - 1; j >= 0 && !same; j--) {
-      const x = sets[j];
-      if (x.warm) continue;
-      if (!any) any = x;
-      if ((x.side || '') === (s.side || '')) same = x;
+    for (let j = i - 1; j >= 0; j--) {
+      if (sets[j].warm) continue;
+      if (any == null) any = j;
+      if ((sets[j].side || '') === side) return { j, gap: 1 };
     }
-    const ok = (x) => !!x && !!x.end && x.mode === s.mode;
-    return ok(same) ? same : !same && ok(any) ? any : null;
+    return any != null ? { j: any, gap: 0 } : null;
   }
 
   /** The row you're on in an exercise: the set that's running, else the first one not yet started. */
@@ -754,11 +746,13 @@
     return run >= 0 ? run : sets.findIndex((s) => !s.start && !s.end);
   }
 
+  /** A row's hints: { kg, reps, partials, why } (why: a short reason when the weight moved). */
   function placeholder(k, i) {
     const it = S.current.items[k];
     const def = exDef(it.name);
     const s = it.sets[i];
     const p = sideEntry(k, i);
+    const partials = p ? p.partials : null;
     const wantsKg = (x) => !def.bodyweight || x.mode === 'Weighted';
     if (s.warm) {
       // Warm-up hint: last time's same warm-up, else a lighter share of the working weight.
@@ -769,39 +763,71 @@
         const share = [0.5, 0.7, 0.85][Math.min(unitIndex(k, i), 2)];
         if (base) kg = Math.max(2.5, Math.round((base * share) / 2.5) * 2.5);
       }
-      return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
+      return { kg, reps: p ? p.reps : null, partials, why: '' };
     }
-    // Weight hint: the set before once it's done; else the weight suggested from your history
-    // (suggestKg); else the set before (same side); else your last workout's final set.
-    const src = wantsKg(s) ? carrySource(k, i) : null;
-    let kg = src && num(src.kg) != null ? num(src.kg) : null;
-    let reps = p ? p.reps : null;
+    const pl = plan(k, i);
+    let kg = wantsKg(s) ? pl.kg : null;
+    // Nothing to go by yet: the set before (same side), else your last workout's final set.
     if (kg == null && wantsKg(s)) {
-      const sug = suggestKg(k, i, p);
-      if (sug) [kg, reps] = [sug.kg, sug.reps];
-    }
-    if (kg == null) {
       for (let j = i - 1; j >= 0 && kg == null; j--) {
         const x = it.sets[j];
         if (x.warm || (x.side || '') !== (s.side || '') || !wantsKg(x)) continue;
         kg = num(x.kg) != null ? num(x.kg) : placeholder(k, j).kg;
       }
+      const last = lastOf(k);
+      if (kg == null && last) {
+        const pool = last.entries.filter((e) => e.kg != null && (!def.bodyweight || e.variation === 'Weighted'));
+        if (pool.length) kg = pool[pool.length - 1].kg;
+      }
     }
-    const last = lastOf(k);
-    if (kg == null && last && wantsKg(s)) {
-      const pool = last.entries.filter((e) => e.kg != null && (!def.bodyweight || e.variation === 'Weighted'));
-      if (pool.length) kg = pool[pool.length - 1].kg;
-    }
-    return { kg, reps, partials: p ? p.partials : null };
+    return { kg, reps: pl.reps, partials, why: pl.why };
   }
 
   // ---------- Suggested weights ----------
+  // Every hint comes from one estimate of your strength on a set: an estimated 1-rep max (E, by
+  // Epley: weight × (1 + reps / 30)), which puts any weight and reps on the same scale.
+  // - Before you've done a set of the exercise today, E comes from your last few like-for-like
+  //   workouts (same fresh or pre-fatigued state) for that set (histStrength).
+  // - Once you have, it's the set you just did, less how much you usually drop off from one set to
+  //   the next on that exercise (setDecay, learned from your history).
+  // The weight then follows your rep range (Settings, or per exercise on the Exercises tab, see
+  // chooseKg): from history it's double progression (one more rep than last time until you reach the
+  // top of the range, then the weight goes up); during a workout the weight stays while the reps
+  // you'd get still land in the range, and moves to the heaviest weight that gets you back in when not.
+  const e1rm = (kg, reps) => (kg && reps ? kg * (1 + reps / 30) : 0);
+  /** The reps you'd get at a load, given your estimated 1-rep max E. */
+  const repsAt = (E, load) => (E > 0 && load > 0 ? 30 * (E / load - 1) : 0);
+  // The reps that count for a set (the weaker side for one-arm sets).
+  const repsOf = (e) => (e.repsR != null ? Math.min(e.reps || 0, e.repsR || 0) : e.reps);
   const midOf = (xs) => {
     const v = xs.slice().sort((a, b) => a - b);
     const m = Math.floor(v.length / 2);
     return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
   };
-  /** How much weaker you are pre-fatigued than fresh: from your own workouts (the middle across exercises), else 0.9. */
+  const DECAY_START = 0.96; // strength kept from one set to the next, until your history says otherwise
+  const MAX_UP = 1.15; // a suggestion moves at most this far from the weight it starts from
+  const MAX_DOWN = 0.8; // (always at least one step)
+  const STALE_AFTER = 21; // days off before the suggestion eases off, 1% a week, up to 8%
+  // The weight strength is worked out on: what's on the machine; with added weight on a bodyweight
+  // exercise, your body weight plus it (70 kg until you add yours in Settings); Landmine Press logs the
+  // plates only, so about 10 kg is added for the bar's share.
+  const BAR_SHARE = 10;
+  function loadOf(def, kg) {
+    if (kg == null) return null;
+    if (def.bodyweight) return (Number(S.settings.bodyKg) > 0 ? Number(S.settings.bodyKg) : 70) + kg;
+    if (def.kgLabel) return BAR_SHARE + kg;
+    return kg;
+  }
+  const REP_RANGES = ['5-8', '6-10', '8-12', '10-12', '10-15', '12-15', '15-20', '20-30'];
+  /** Your rep range for an exercise: its own (Exercises tab), else the one in Settings (12–15). */
+  function repRange(name) {
+    const own = /^(\d+)-(\d+)$/.exec((S.settings.repRanges || {})[name] || '');
+    let lo = own ? +own[1] : +S.settings.repMin || 12;
+    let hi = own ? +own[2] : +S.settings.repMax || 15;
+    if (lo > hi) [lo, hi] = [hi, lo];
+    return { lo, hi, own: !!own };
+  }
+  /** How much weaker you are pre-fatigued than fresh, across your exercises (the middle one), else 0.9. */
   function fatigueRatio() {
     if (memoHist.has('fatigueRatio')) return memoHist.get('fatigueRatio');
     const ratios = [];
@@ -819,79 +845,267 @@
     memoHist.set('fatigueRatio', r);
     return r;
   }
-  /** The weight steps you use on an exercise (the smallest gap between weights you've logged), 1–5 kg. */
-  function kgStep(name) {
-    const key = `step|${name}`;
+  /**
+   * The same for one exercise: its own ratio from your last few workouts each way, weighed against the
+   * one across your exercises (worth 2 workouts), so a couple of odd days don't swing it. { r, own }
+   */
+  function stateRatio(name) {
+    const key = `ratio|${name}`;
     if (memoHist.has(key)) return memoHist.get(key);
-    const ws = [...new Set(allSets().filter((r) => r.Exercise === name && !num(r.Drop) && num(r.kg) > 0).map((r) => num(r.kg)))].sort((a, b) => a - b);
-    const gaps = ws.slice(1).map((w, n) => Math.round((w - ws[n]) * 100) / 100).filter((d) => d >= 0.5);
-    const step = gaps.length ? Math.min(5, Math.max(1, Math.min(...gaps))) : 2.5;
+    const g = fatigueRatio();
+    const def = exDef(name);
+    let out = { r: g, own: false };
+    if (!def.bodyweight) {
+      const hs = historyFor(name, '');
+      const top = (f) => hs.filter((h) => h.fatigued === f).slice(0, 4).map((h) => score(h.entries, def).value).filter((v) => v > 0);
+      const fresh = top(false);
+      const tired = top(true);
+      if (fresh.length && tired.length) {
+        const n = Math.min(fresh.length, tired.length);
+        const own = Math.min(1, Math.max(0.7, midOf(tired) / midOf(fresh)));
+        out = { r: (own * n + g * 2) / (n + 2), own: true };
+      }
+    }
+    memoHist.set(key, out);
+    return out;
+  }
+  /**
+   * How much strength carries from one set to the next on an exercise: from back-to-back sets in your
+   * last 10 workouts of it, weighed against the exercise as a whole (for one type) or 0.96 (worth 4
+   * pairs of sets), so it settles as you log more. { d, n: pairs of sets it's learned from }
+   */
+  function setDecay(name, variation) {
+    const key = `decay|${name}|${variation || ''}`;
+    if (memoHist.has(key)) return memoHist.get(key);
+    const def = exDef(name);
+    const ratios = [];
+    historyFor(name, variation).slice(0, 10).forEach((h) => {
+      const es = h.entries;
+      for (let n = 1; n < es.length; n++) {
+        const a = es[n - 1];
+        const b = es[n];
+        if (b.set !== a.set + 1 || (a.variation || '') !== (b.variation || '')) continue;
+        [
+          [a.kg, a.reps, b.kg, b.reps],
+          [a.kgR != null ? a.kgR : a.kg, a.repsR, b.kgR != null ? b.kgR : b.kg, b.repsR],
+        ].forEach(([ka, ra, kb, rb]) => {
+          if (!(ra > 0) || !(rb > 0)) return;
+          let r;
+          // Same weight (or bodyweight): the reps alone say it. Else compare the estimated maxes.
+          if (ka === kb) r = (1 + rb / 30) / (1 + ra / 30);
+          else if (ka > 0 && kb > 0) r = e1rm(loadOf(def, kb), rb) / e1rm(loadOf(def, ka), ra);
+          else return;
+          if (r >= 0.75 && r <= 1.1) ratios.push(r);
+        });
+      }
+    });
+    const prior = variation ? setDecay(name, '').d : DECAY_START;
+    const d = Math.min(1, Math.max(0.85, (prior * 4 + ratios.reduce((x, y) => x + y, 0)) / (4 + ratios.length)));
+    const out = { d, n: ratios.length };
+    memoHist.set(key, out);
+    return out;
+  }
+  /**
+   * The weight steps you use on an exercise: the most common gap between the weights you've logged
+   * (1–5 kg), once it's come up at least twice; until then 2.5 kg.
+   */
+  function kgStep(name, variation) {
+    const key = `step|${name}|${variation || ''}`;
+    if (memoHist.has(key)) return memoHist.get(key);
+    const weights = (v) =>
+      [...new Set(allSets().filter((r) => r.Exercise === name && (!v || r.Variation === v) && num(r.kg) > 0).map((r) => num(r.kg)))].sort((a, b) => a - b);
+    let ws = weights(variation);
+    if (ws.length < 3 && variation) ws = weights('');
+    const count = new Map();
+    ws.slice(1).forEach((w, n) => {
+      const g = Math.round((w - ws[n]) * 4) / 4;
+      if (g >= 0.5 && g <= 10) count.set(g, (count.get(g) || 0) + 1);
+    });
+    let step = 2.5;
+    let most = 1;
+    [...count.entries()].sort((a, b) => a[0] - b[0]).forEach(([g, c]) => c > most && ([step, most] = [g, c]));
+    step = Math.min(5, Math.max(1, step));
     memoHist.set(key, step);
     return step;
   }
-  /** Rounds to a weight you'd actually load: steps of kgStep away from a weight you've used. */
-  const snapKg = (name, kg, base) => {
-    const step = kgStep(name);
-    return Math.max(step, Math.round((base + Math.round((kg - base) / step) * step) * 100) / 100);
-  };
-  /** Your usual reps on this set: the middle of your last few workouts in the same state (else any). */
-  function usualReps(k, i) {
-    const it = S.current.items[k];
-    const s = it.sets[i];
-    const no = setNo(k, i);
-    const hs = historyFor(it.name, varFilter(k));
-    const st = liveFatigued(k);
-    const same = hs.filter((h) => h.fatigued === st || h.fatigued == null);
-    const reps = (same.length >= 2 ? same : hs)
-      .slice(0, 5)
-      .map((h) => h.entries.find((e) => e.set === no))
-      .filter(Boolean)
-      .map((e) => (s.side === 'R' ? e.repsR : e.reps))
-      .filter((x) => x != null && x > 0);
-    return reps.length ? Math.round(midOf(reps)) : null;
-  }
+  /** Rounds to a weight you'd actually load: whole steps away from one you've used. */
+  const snapTo = (kg, base, step) => Math.max(step, Math.round((base + Math.round((kg - base) / step) * step) * 100) / 100);
+
   /**
-   * The weight to try on a set, from your history (p = that set in the workout refFor picked):
-   * - your strength there (estimated 1-rep max from its weight and reps), converted to today's
-   *   state if that workout was in the other one (fresh vs pre-fatigued);
-   * - the weight you'd get your usual reps on this set with: beat your usual reps last time and it
-   *   steps up, fall short and it steps down;
-   * - kept within -15% / +10% of last time, and snapped to the weights you use.
-   * Added-weight exercises (pull-ups, landmine) just carry the weight over, converted if needed.
-   * Returns { kg, reps } (reps: the target that goes with the weight) or null.
+   * Your expected strength (E) on set `no` of an exercise before you've done any of it today: from your
+   * last 4 workouts of it in today's state (fresh or pre-fatigued), else the other state's, converted
+   * by stateRatio.
+   * - The latest counts most (each workout back counts half as much). If it's above that average it
+   *   counts in full, so a good day moves you up while one bad day only pulls you down halfway.
+   * - More than 3 weeks since it, E eases off 1% a week, up to 8%.
+   * Returns { E, kg, reps (that latest set), conv (converted from the other state), stale, weeks } or null.
    */
-  function suggestKg(k, i, p) {
-    const it = S.current.items[k];
-    const def = exDef(it.name);
-    const ref = refFor(k);
-    if (!ref || !p || !p.kg || (def.bodyweight && p.variation !== 'Weighted')) return null;
-    const base = p.kg * ref.factor;
-    if (def.bodyweight || def.kgLabel) return { kg: snapKg(it.name, base, p.kg), reps: p.reps };
-    const usual = usualReps(k, i) || p.reps;
-    let kg = p.reps && usual ? (e1rm(p.kg, p.reps) * ref.factor) / (1 + usual / 30) : base;
-    kg = Math.min(Math.max(kg, base * 0.85), base * 1.1);
-    const out = snapKg(it.name, kg, p.kg);
-    return { kg: out, reps: out === p.kg ? p.reps : usual };
+  function histStrength(name, variation, no, side, fatigued) {
+    const key = `hs|${name}|${variation || ''}|${no}|${side}|${fatigued}|${S.current ? S.current.session : ''}`;
+    if (memoHist.has(key)) return memoHist.get(key);
+    const def = exDef(name);
+    const decay = setDecay(name, variation).d;
+    const hs = historyFor(name, variation);
+    // That workout's same set (else its nearest, less or plus the set-to-set drop-off).
+    const pick = (h) => {
+      const es = h.entries.filter((e) => !def.bodyweight || e.variation === 'Weighted');
+      if (!es.length) return null;
+      const e = es.find((x) => x.set === no) || es.reduce((a, b) => (Math.abs(b.set - no) < Math.abs(a.set - no) ? b : a));
+      const kg = side === 'R' ? (e.kgR != null ? e.kgR : e.kg) : e.kg;
+      const reps = side === 'R' ? e.repsR : e.reps;
+      if (!(kg > 0) || !(reps > 0)) return null;
+      return { kg, reps, date: h.date, E: e1rm(loadOf(def, kg), reps) * decay ** (no - e.set) };
+    };
+    const take = (list) => list.map(pick).filter(Boolean).slice(0, 4);
+    let pts = take(hs.filter((h) => h.fatigued === fatigued || h.fatigued == null));
+    const conv = !pts.length;
+    let factor = 1;
+    if (conv) {
+      pts = take(hs);
+      const r = stateRatio(name).r;
+      factor = fatigued ? r : 1 / r;
+    }
+    let out = null;
+    if (pts.length) {
+      let wsum = 0;
+      let esum = 0;
+      pts.forEach((p, n) => {
+        wsum += 0.5 ** n;
+        esum += 0.5 ** n * p.E;
+      });
+      const avg = esum / wsum;
+      const last = pts[0];
+      let days = (Date.now() - new Date(`${last.date}T12:00:00`).getTime()) / 864e5;
+      if (!isFinite(days) || days < 0) days = 0;
+      const stale = Math.min(0.08, Math.max(0, (days - STALE_AFTER) / 7) * 0.01);
+      const E = (last.E >= avg ? last.E : (last.E + avg) / 2) * factor * (1 - stale);
+      out = { E, kg: last.kg, reps: last.reps, conv, stale, weeks: Math.round(days / 7) };
+    }
+    memoHist.set(key, out);
+    return out;
   }
 
-  function compareSet(k, i) {
+  /**
+   * Picks a set's weight from your expected strength E and the weight it starts from (anchor):
+   * - progress (from history): one more rep than you'd get at last time's weight, until that reaches
+   *   the top of your range; then up to the heaviest weight that gets you one rep inside the range
+   *   (13 for 12–15).
+   * - otherwise (during a workout): keep the weight while the reps you'd get are inside the range;
+   *   over it, up to the heaviest weight that gets you near the top (14 for 12–15), so the new
+   *   weight lasts a couple of sets as you tire.
+   * Under the range, either way, down only as far as it takes to get back in (the heaviest weight
+   * that gets you to the bottom). A weight up that would put you more than a rep under the range
+   * waits: add reps first. Returns { kg, reps, r0 (the reps you'd get at the anchor) }.
+   */
+  function chooseKg(def, step, E, anchor, progress, range) {
+    const at = (kg) => Math.round(repsAt(E, loadOf(def, kg)));
+    const r0 = at(anchor);
+    const res = (kg, reps) => ({ kg, reps: Math.max(1, reps), r0 });
+    const over = progress ? r0 >= range.hi : r0 > range.hi;
+    const under = r0 < range.lo;
+    if (!over && !under) return res(anchor, progress ? Math.min(range.hi, r0 + 1) : r0);
+    const aim = Math.min(range.hi, under ? range.lo : progress ? range.lo + 1 : Math.max(range.lo, range.hi - 1));
+    const cands = [];
+    for (let j = 1; j <= 40; j++) {
+      const c = Math.round((anchor + (over ? j : -j) * step) * 100) / 100;
+      if (c < step - 1e-9 || (j > 1 && (c > anchor * MAX_UP || c < anchor * MAX_DOWN))) break;
+      cands.push(c);
+    }
+    const fit = cands.filter((c) => at(c) >= aim);
+    if (over) {
+      // Else the heaviest still in the range; from history, else one step up if it's within a rep of it.
+      const inRange = cands.filter((c) => at(c) >= range.lo);
+      const pick = fit.length ? fit[fit.length - 1] : inRange.length ? inRange[inRange.length - 1] : progress && cands.length && at(cands[0]) >= range.lo - 1 ? cands[0] : null;
+      return pick != null ? res(pick, at(pick)) : res(anchor, r0 + (progress ? 1 : 0));
+    }
+    if (fit.length) return res(fit[0], at(fit[0]));
+    if (cands.length) return res(cands[cands.length - 1], at(cands[cands.length - 1]));
+    return res(anchor, r0);
+  }
+
+  /**
+   * What to aim for on a working row today: { kg, reps, why, E, src, r }.
+   * src says where E came from: 'today' (a set you've done today, less your set-to-set drop-off),
+   * 'history' (histStrength), or 'carry' (the set before is done but its reps aren't in yet, so its
+   * weight carries over). Bodyweight and band sets get reps only (r: unrounded, for the sets after).
+   */
+  function plan(k, i) {
     const it = S.current.items[k];
     const def = exDef(it.name);
     const s = it.sets[i];
-    if (s.warm) return null;
-    // Only against a past workout where this exercise was in the same state (fresh or pre-fatigued).
-    const ref = refFor(k);
-    if (!ref || !ref.same) return null;
-    const p = sideEntry(k, i);
-    if (!p) return null;
-    if (def.bodyweight && variationOf(k, s) !== (p.variation || 'Bodyweight')) return null;
-    const kg = def.bodyweight && s.mode !== 'Weighted' ? null : num(s.kg);
-    return cmp(kg, num(s.reps), p.kg, p.reps);
-  }
+    const vf = varFilter(k);
+    const decay = setDecay(it.name, vf).d;
+    const pr = prevRow(k, i);
+    const x = pr && it.sets[pr.j].mode === s.mode && (s.mode !== 'Band' || it.sets[pr.j].band === s.band) ? it.sets[pr.j] : null;
+    const pp = x && !x.end ? plan(k, pr.j) : null;
+    const out = { kg: null, reps: null, why: '', E: null, src: '', r: null };
 
-  // Estimated 1-rep max (Epley), and the reps that count for a set (the weaker side for one-arm sets).
-  const e1rm = (kg, reps) => (kg && reps ? kg * (1 + reps / 30) : 0);
-  const repsOf = (e) => (e.repsR != null ? Math.min(e.reps || 0, e.repsR || 0) : e.reps);
+    if (def.bodyweight && s.mode !== 'Weighted') {
+      // Bodyweight or band: the reps from the set before, less your usual drop-off; else last time's.
+      const r = x && x.end && num(x.reps) > 0 ? num(x.reps) : pp && pp.src === 'today' ? pp.r : null;
+      if (r != null) {
+        out.r = 30 * ((1 + r / 30) * decay ** pr.gap - 1);
+        out.reps = Math.max(1, Math.round(out.r));
+        out.src = 'today';
+      } else {
+        const e = sideEntry(k, i);
+        if (e && (e.variation || 'Bodyweight') === variationOf(k, s)) out.reps = e.reps;
+      }
+      return out;
+    }
+
+    const range = repRange(it.name);
+    let E = null;
+    let anchor = null;
+    let src = '';
+    if (x) {
+      const xkg = num(x.kg) != null ? num(x.kg) : pp ? pp.kg : null;
+      const xr = num(x.reps);
+      if (x.end && xr > 0 && xkg > 0) {
+        E = e1rm(loadOf(def, xkg), xr) * decay ** pr.gap;
+        src = 'today';
+      } else if (pp && pp.src === 'today' && pp.E) {
+        E = pp.E * decay ** pr.gap;
+        src = 'today';
+      } else if (x.end && xkg > 0) src = 'carry';
+      if (src) anchor = xkg;
+    }
+    const h = src === 'today' ? null : histStrength(it.name, vf, setNo(k, i), s.side || '', liveFatigued(k));
+    if (h && src === 'carry') E = h.E;
+    else if (h && !src) {
+      E = h.E;
+      anchor = h.kg;
+      src = 'history';
+    }
+    Object.assign(out, { E, src });
+    const own = num(s.kg);
+    if (own > 0) {
+      // You've picked the weight: the reps you'd get with it.
+      out.kg = own;
+      if (E) out.reps = Math.max(1, Math.round(repsAt(E, loadOf(def, own))));
+      return out;
+    }
+    if (anchor == null) return out;
+    out.kg = anchor;
+    if (!E) return out;
+    // The right side of a one-arm set keeps the left side's weight: one set, one weight.
+    if (src === 'carry' || (src === 'today' && pr.gap === 0)) {
+      out.reps = Math.max(1, Math.round(repsAt(E, loadOf(def, anchor))));
+      return out;
+    }
+    const c = chooseKg(def, kgStep(it.name, vf), E, anchor, src === 'history', range);
+    out.kg = c.kg;
+    out.reps = c.reps;
+    if (c.kg !== anchor) {
+      const to = `${c.kg > anchor ? 'Up' : 'Down'} to ${fmt(c.kg)} kg: `;
+      const rr = `${range.lo}–${range.hi}`;
+      if (src === 'today') out.why = `${to}you'd get about ${c.r0} at ${fmt(anchor)} kg, ${c.r0 > range.hi ? 'over' : 'under'} your ${rr}`;
+      else if (h.conv) out.why = `${to}${liveFatigued(k) ? 'pre-fatigued today, so scaled from your fresh workouts' : 'fresh today, so scaled from your pre-fatigued workouts'}`;
+      else if (c.kg < anchor && h.stale && h.reps >= range.lo) out.why = `${to}${h.weeks} weeks since you last did it`;
+      else out.why = `${to}you got ${h.reps} at ${fmt(anchor)} kg last time${h.reps > range.hi ? `, over your ${rr}` : h.reps >= range.hi ? `, the top of your ${rr}` : h.reps < range.lo ? `, under your ${rr}` : ''}`;
+    }
+    return out;
+  }
 
   // ---------- Sheet rows ----------
   const dropBase = (s, d) => `${s.id}-${d.id}`;
@@ -1041,7 +1255,7 @@
       }
     }, 800);
   }
-  /** Redraws just the line under a set (markers, PR, timing) without touching the boxes being typed in. */
+  /** Redraws just the line under a set (hint reason, timing) without touching the boxes being typed in. */
   function refreshFooter(k, i) {
     const it = S.current && S.current.items[k];
     const s = it && it.sets[i];
@@ -2198,20 +2412,27 @@
   /** What a weight box shows: what you typed, else on the row you're on, the hint. */
   const kgShown = (own, hint, active) => (own !== '' && own != null ? own : active && hint != null ? fmt(hint) : '');
 
-  /** Updates an exercise's weight boxes in place as you type, so hints follow without a re-render. */
+  /**
+   * Updates an exercise's weight and reps hints in place as you type (a weight, or the reps of a set
+   * you've done, which the sets after it follow), so they change without a re-render.
+   */
   function refreshHints(k) {
     const it = S.current.items[k];
     const act = activeRow(k);
-    document.querySelectorAll(`input[data-f="kg"][data-k="${k}"]`).forEach((el) => {
+    document.querySelectorAll(`input[data-k="${k}"]`).forEach((el) => {
+      const f = el.dataset.f;
+      if (f !== 'kg' && f !== 'reps') return;
       const i = +el.dataset.i;
       const s = it.sets[i];
       const j = el.dataset.d != null ? +el.dataset.d : null;
       const d = s && j != null ? s.drops[j] : null;
       if (!s || (j != null && !d) || el === document.activeElement) return;
       const ph = d ? dropPlaceholder(k, i, j) : placeholder(k, i);
-      el.placeholder = ph.kg == null ? '' : fmt(ph.kg);
-      el.value = kgShown(d ? d.kg : s.kg, ph.kg, i === act);
+      const hint = f === 'kg' ? ph.kg : ph.reps;
+      el.placeholder = hint == null ? '' : fmt(hint);
+      if (f === 'kg') el.value = kgShown(d ? d.kg : s.kg, ph.kg, i === act);
     });
+    it.sets.forEach((s, i) => !s.end && refreshFooter(k, i));
   }
 
   function setRowHtml(k, i, label) {
@@ -2276,15 +2497,16 @@
     </div>`;
   }
 
-  /** The line under a set: up/down vs your last like-for-like workout, set and rest times, and "+ Drop". */
+  /** The line under a set: why its suggested weight moved, set and rest times, and "+ Drop". */
   function footerHtml(k, i, label) {
     const it = S.current.items[k];
     const s = it.sets[i];
     const a = `data-k="${k}" data-i="${i}"`;
     let inner = '';
-    if (s.end && !s.warm) {
-      const m = compareSet(k, i);
-      if (m) inner += `<span class="mk ${m.dir > 0 ? 'up' : m.dir < 0 ? 'down' : 'same'}">${m.dir > 0 ? '▲' : m.dir < 0 ? '▼' : '='} ${esc(m.text)}</span>`;
+    if (!s.warm && !s.start && !s.end && !it.sets.some((x) => x.start && !x.end) && it.sets.findIndex((x) => !x.warm && !x.start && !x.end) === i) {
+      // Only on the next working set to do, and only when its weight moved from the one before.
+      const why = placeholder(k, i).why;
+      if (why) inner += `<span class="muted">${esc(why)}</span>`;
     }
     if (s.end) {
       // Set and rest times; tap to fix them (forgot to tap Start, or End).
@@ -2455,22 +2677,11 @@
 
   function finishModal() {
     const st = sessionStats();
-    // Up/down only counts sets that had a like-for-like workout to compare with (same fresh/pre-fatigued state).
-    let ups = 0;
-    let downs = 0;
-    forEachSet((k, i, s) => {
-      if (!s.end || s.warm) return;
-      const m = compareSet(k, i);
-      if (m && m.dir > 0) ups++;
-      if (m && m.dir < 0) downs++;
-    });
     const total = st.first ? Math.max(60, (st.last - st.first) / 1000) : 0;
     const run = runningSet();
-    const vs = [ups ? `▲ ${ups} set${ups === 1 ? '' : 's'} up` : '', downs ? `▼ ${downs} down` : ''].filter(Boolean).join(' · ');
     return `<div class="modal-back" data-action="modal-close-back"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
       <h2 id="mt">Finish ${esc(S.current.day)}?</h2>
       ${statTiles({ total, work: st.work, rest: st.rest, sets: st.sets })}
-      ${vs ? `<p class="small">${vs} on your last like-for-like workout.</p>` : ''}
       ${issuesHtml(workoutIssues(liveCheckSets()), 'finish')}
       ${run ? '<p class="muted small">The set that’s running will be ended now.</p>' : ''}
       ${st.any || run ? '' : '<p class="muted">No sets finished, so nothing will be saved.</p>'}
@@ -2615,6 +2826,39 @@
       .map(([k, v, d]) => `<li><span class="muted">${esc(k)}</span><span><b>${esc(v)}</b>${d ? `<span class="muted small"> · ${esc(niceDate(d))}</span>` : ''}</span></li>`)
       .join('')}</ul></section>`;
   }
+  /**
+   * The Exercises tab's suggestions: the exercise's rep range, what set 1 would suggest next time
+   * (fresh and pre-fatigued), and what's been learned from your history.
+   */
+  function suggestPanel(name, def, v) {
+    const range = repRange(name);
+    const own = (S.settings.repRanges || {})[name] || '';
+    const opts = REP_RANGES.concat(own && !REP_RANGES.includes(own) ? [own] : []);
+    const dflt = `${+S.settings.repMin || 12}–${+S.settings.repMax || 15}`;
+    let h = `<section class="panel"><h2>Suggestions</h2>
+      <label class="setup-row"><span>Rep Range</span><select data-reprange="${esc(name)}" aria-label="Rep range for ${esc(name)}">
+        <option value="">Default (${dflt})</option>${opts.map((o) => `<option value="${o}" ${o === own ? 'selected' : ''}>${o.replace('-', '–')}</option>`).join('')}
+      </select></label>`;
+    if (!def.bodyweight) {
+      const step = kgStep(name, v);
+      const plus = def.kgLabel ? '+' : '';
+      const line = (tired) => {
+        const hs = histStrength(name, v, 1, '', tired);
+        if (!hs) return '';
+        const c = chooseKg(def, step, hs.E, hs.kg, true, range);
+        return `<li><span class="muted">${tired ? 'Pre-Fatigued' : 'Fresh'}${hs.conv ? ' (Estimated)' : ''}</span><span><b>${plus}${fmt(c.kg)} kg × ${c.reps}</b></span></li>`;
+      };
+      const rows = line(false) + line(true);
+      if (rows) {
+        const dec = setDecay(name, v);
+        const sr = stateRatio(name);
+        const pct = (x) => Math.max(0, Math.round((1 - x) * 100));
+        h += `<h3>Next Time, Set 1${v ? ` · ${esc(v)}` : ''}</h3><ul class="records">${rows}</ul>
+          <p class="muted small">Each set after the first: about ${pct(dec.d)}% weaker${dec.n ? ` (from ${dec.n} pairs of back-to-back sets)` : ' (a starting guess until you log more)'}. Pre-fatigued: about ${pct(sr.r)}% weaker than fresh${sr.own ? '' : ' (across your exercises)'}. Weights move in ${fmt(step)} kg steps.</p>`;
+      }
+    }
+    return h + '</section>';
+  }
   function exercisesView() {
     let h = '<header class="top"><h1>Exercises</h1></header>';
     const recent = exercisesWithHistory();
@@ -2640,7 +2884,7 @@
       P.variation = '';
     }
     const sessions = historyFor(P.name, P.variation);
-    if (!sessions.length) return h + '<section class="panel"><p class="muted">No sets logged for this yet.</p></section>';
+    if (!sessions.length) return h + suggestPanel(P.name, def, '') + '<section class="panel"><p class="muted">No sets logged for this yet.</p></section>';
     const pts = sessions.map((s) => Object.assign({ date: s.date, fatigued: s.fatigued === true }, score(s.entries, def))).reverse();
     // Progress is read per state: your fresh workouts against each other, pre-fatigued against pre-fatigued.
     const line = (tired) => {
@@ -2657,17 +2901,16 @@
       ${chartSvg(pts)}
       ${both ? '<div class="legend"><span><i class="key"></i>Fresh</span><span><i class="key tired"></i>Pre-fatigued (after 2+ sets for the same muscles)</span></div>' : ''}
       <p class="muted small">${esc(pts[0].hint)} The trend is the straight-line fit through your last 8 weeks.</p></section>`;
+    // Suggestions go by one type at a time: the one picked above, else the one you did last.
+    const vNext = hasOptions(def) ? P.variation || (sessions[0].entries[0] && sessions[0].entries[0].variation) || '' : '';
+    h += suggestPanel(P.name, def, vNext);
     h += recordsHtml(sessions, def);
     h += `<h2>History</h2><ul class="list">${sessions
-      .map((s, i) => {
-        // Up/down against the previous workout in the same state.
-        const prev = sessions.slice(i + 1).find((o) => o.fatigued === s.fatigued);
-        const d = prev ? score(s.entries, def).value - score(prev.entries, def).value : null;
-        const mk = d == null ? '' : `<span class="mk ${d > 0 ? 'up' : d < 0 ? 'down' : 'same'}">${d > 0 ? '▲' : d < 0 ? '▼' : '='}</span>`;
-        const v = !def.bodyweight && !P.variation && s.entries[0] && s.entries[0].variation ? ` · ${esc(s.entries[0].variation)}` : '';
+      .map((s) => {
+        const v =!def.bodyweight && !P.variation && s.entries[0] && s.entries[0].variation ? ` · ${esc(s.entries[0].variation)}` : '';
         const st = stateLabel(s.fatigued);
         const ar = avgRest(s.entries);
-        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}${st ? ` <span class="state${s.fatigued ? ' tired' : ''}">${st}</span>` : ''}</span>${mk}</div>
+        return `<li><div class="li-main"><span>${esc(niceDate(s.date))}${v}${st ? ` <span class="state${s.fatigued ? ' tired' : ''}">${st}</span>` : ''}</span></div>
           <div class="muted small">${esc(summary(s.entries, def))}${ar ? ` · rest ~${clock(ar)}` : ''}</div></li>`;
       })
       .join('')}</ul>`;
@@ -2747,6 +2990,10 @@
     </div></div>`;
     return h;
   }
+  const repSelect = (key, aria) =>
+    `<select data-setting="${key}" aria-label="${aria}">${Array.from({ length: 28 }, (_, n) => n + 3)
+      .map((n) => `<option value="${n}" ${+S.settings[key] === n ? 'selected' : ''}>${n}</option>`)
+      .join('')}</select>`;
   function settingsView() {
     const sounds = SOUNDS.map(
       ([v, t]) => `<div class="sound-row"><label class="check"><input type="radio" name="sound" data-setting-radio="sound" value="${v}" ${S.settings.sound === v ? 'checked' : ''}> ${t}</label>
@@ -2798,7 +3045,12 @@
         <label class="check"><input type="checkbox" data-setting="partials" ${S.settings.partials ? 'checked' : ''}> Partial Reps</label>
         <p class="muted small">When on, each exercise card has a Partial Reps switch, and Workout Setup can turn it on by default. When off, partial reps are hidden everywhere.</p>
         <label class="setup-row"><span>Body Weight (Kg)</span><input data-setting="bodyKg" value="${Number(S.settings.bodyKg) > 0 ? esc(fmt(S.settings.bodyKg)) : ''}" inputmode="decimal" autocomplete="off" placeholder="e.g. 75" aria-label="Body weight in kg"></label>
-        <p class="muted small">Used for the estimated calories in workout summaries: about 6 METs while lifting and 2 between sets (1 MET is roughly 1 kcal per kg per hour). It's a rough guide, not a measurement. Leave blank to hide it.</p>
+        <p class="muted small">Used for the estimated calories in workout summaries (about 6 METs while lifting and 2 between sets; 1 MET is roughly 1 kcal per kg per hour), and for weight suggestions on weighted pull-ups and chin-ups. Calories are a rough guide, not a measurement. Leave blank to hide them.</p>
+      </section>
+      <section class="panel">
+        <h2>Weight Suggestions</h2>
+        <div class="setup-row"><span>Rep Range</span><span class="range-pick">${repSelect('repMin', 'Fewest reps')}<span>to</span>${repSelect('repMax', 'Most reps')}</span></div>
+        <p class="muted small">The weight boxes suggest weights that land you in this range. From your past workouts it's one more rep than last time, until you reach the top of the range; then the weight goes up. During a workout, each set follows the reps you just did and how much you usually drop off from set to set: the weight stays while you'd still land in the range, and moves when you wouldn't. Give an exercise its own range on the Exercises tab.</p>
       </section>
       <section class="panel">
         <h2>Workout Setup</h2>
@@ -3388,7 +3640,7 @@
       s[f] = el.value;
     }
     if (el.value) el.classList.remove('need');
-    if (f === 'kg') refreshHints(k);
+    if (f === 'kg' || f === 'reps') refreshHints(k);
     persist();
     if (s.end) requeueSoon(k, s.id);
   });
@@ -3449,9 +3701,18 @@
     } else if (el.dataset.setting) {
       const key = el.dataset.setting;
       S.settings[key] = el.type === 'checkbox' ? el.checked : +el.value;
+      // The rep range's ends can't cross: moving one past the other takes it along.
+      if (key === 'repMin' && S.settings.repMin > S.settings.repMax) S.settings.repMax = S.settings.repMin;
+      if (key === 'repMax' && S.settings.repMax < S.settings.repMin) S.settings.repMin = S.settings.repMax;
       saveSettings();
       if (key === 'keepAwake') keepAwake(!!S.current);
-      if (key === 'supersets' || key === 'partials') render();
+      if (key === 'supersets' || key === 'partials' || key === 'repMin' || key === 'repMax') render();
+    } else if (el.dataset.reprange != null) {
+      const own = S.settings.repRanges || (S.settings.repRanges = {});
+      if (el.value) own[el.dataset.reprange] = el.value;
+      else delete own[el.dataset.reprange];
+      saveSettings();
+      render();
     } else if (el.dataset.settingRadio) {
       S.settings[el.dataset.settingRadio] = el.value;
       saveSettings();

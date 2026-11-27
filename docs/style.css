@@ -337,6 +337,8 @@ input[type="radio"] { width: 22px; height: 22px; padding: 0; accent-color: var(-
 .setup-edit { padding: 0 0 12px; display: grid; gap: 8px; }
 .setup-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--muted); }
 .setup-row select, .setup-row input { width: auto; min-width: 150px; max-width: 60%; height: 38px; font-size: 15px; }
+.range-pick { display: flex; align-items: center; gap: 8px; }
+.setup-row .range-pick select { min-width: 72px; max-width: none; }
 .setup-edit .chips { margin: 0; }
 
 /* Warm-ups, PRs, targets, supersets */
