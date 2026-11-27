@@ -21,7 +21,7 @@ A web app for your iPhone and PC.
 2. **Workout:**
    - **Pinned top bar:** the total workout time, plus a big countdown to your next set. While a set is running, it shows the set timer and your "to beat" target instead.
    - **Set rows:** each row reads set number, then weight, then Start/End, then reps. Reps (and partials) unlock once you tap End.
-   - **Weight carry-over:** when a set finishes, the next set takes its weight unless you change it.
+   - **Weight carry-over:** when a set finishes, the sets after it hint its weight (and drop weights). Hints show dim, except on the row you're on, where the hint shows white as the value. Tapping a white hint selects it so typing replaces it, and an unchanged hint is saved when you tap End.
    - **On each exercise:** its note (read-only), type pickers, what you did last time, up/same/down markers, PR badges, warm-up rows (W1…), and drop rows.
    - **Reorder** (Do Next, ↑ ↓, save the order), and **search** to add or create any exercise.
 3. **Exercises:** each exercise's note (edit it here), progress chart, records and history.

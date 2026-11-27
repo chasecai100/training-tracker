@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.1';
+  const VERSION = '3.5.2';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -581,15 +581,30 @@
     const floor = floors[Math.min(unitIndex(k, i), floors.length - 1)];
     const ws = [];
     if (start) for (let w = Math.round((start - step) * 100) / 100; w >= floor - 1e-9 && ws.length < 30; w = Math.round((w - step) * 100) / 100) ws.push(w);
-    s.drops = ws.map((w, j) => Object.assign(s.drops[j] || newDrop(), { kg: fmt(w) }));
+    // Until the set is done its ladder stays as hints, so it follows the weight you pick.
+    s.drops = ws.map((w, j) => Object.assign(s.drops[j] || newDrop(), { kg: s.end ? fmt(w) : '' }));
+  }
+  /** Re-ladders every ultimate set not started yet (their hints follow the sets before them). */
+  function regenUpcoming(k) {
+    if (S.current.items[k].cfg.style !== 'ultimate') return;
+    S.current.items[k].sets.forEach((x, n) => !x.start && !x.end && regenUltimate(k, n));
   }
 
   /** Hints for a drop: last time's same drop, else carry on the step down. */
   function dropPlaceholder(k, i, j) {
-    const s = S.current.items[k].sets[i];
+    const it = S.current.items[k];
+    const s = it.sets[i];
     const p = sideEntry(k, i);
     const pd = p && p.drops[j];
-    let kg = pd ? pd.kg : null;
+    if (it.cfg.style === 'ultimate') {
+      // The ladder: step down from the set's weight.
+      const start = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
+      const step = num(it.cfg.step) || 2.5;
+      return { kg: start ? Math.round((start - step * (j + 1)) * 100) / 100 : null, reps: pd ? pd.reps : null };
+    }
+    // The same drop as the set before once it's done, else last time's same drop, else carry on the step down.
+    const src = carrySource(k, i);
+    let kg = src && src.drops[j] && num(src.drops[j].kg) != null ? num(src.drops[j].kg) : pd ? pd.kg : null;
     if (kg == null && j > 0) {
       const at = (jj) => (jj < 0 ? (num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg) : num(s.drops[jj].kg) != null ? num(s.drops[jj].kg) : dropPlaceholder(k, i, jj).kg);
       const a = at(j - 1);
@@ -597,6 +612,33 @@
       if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
     }
     return { kg, reps: pd ? pd.reps : null };
+  }
+
+  /**
+   * The finished set a row takes its weights from: the set before it on the same side once that's
+   * done, or for the first set of a side, the set just before it (the other side) once that's done.
+   */
+  function carrySource(k, i) {
+    const sets = S.current.items[k].sets;
+    const s = sets[i];
+    if (s.warm) return null;
+    let same = null;
+    let any = null;
+    for (let j = i - 1; j >= 0 && !same; j--) {
+      const x = sets[j];
+      if (x.warm) continue;
+      if (!any) any = x;
+      if ((x.side || '') === (s.side || '')) same = x;
+    }
+    const ok = (x) => !!x && !!x.end && x.mode === s.mode;
+    return ok(same) ? same : !same && ok(any) ? any : null;
+  }
+
+  /** The row you're on in an exercise: the set that's running, else the first one not yet started. */
+  function activeRow(k) {
+    const sets = S.current.items[k].sets;
+    const run = sets.findIndex((s) => s.start && !s.end);
+    return run >= 0 ? run : sets.findIndex((s) => !s.start && !s.end);
   }
 
   function placeholder(k, i) {
@@ -616,8 +658,11 @@
       }
       return { kg, reps: p ? p.reps : null, partials: p ? p.partials : null };
     }
-    // Weight hint: last time's same set, else the set before (same side), else last time's final set.
-    let kg = p && wantsKg(s) && (!def.bodyweight || p.variation === 'Weighted') ? p.kg : null;
+    // Weight hint: the set before once it's done, else last time's same set,
+    // else the set before (same side), else last time's final set.
+    const src = wantsKg(s) ? carrySource(k, i) : null;
+    let kg = src && num(src.kg) != null ? num(src.kg) : null;
+    if (kg == null && p && wantsKg(s) && (!def.bodyweight || p.variation === 'Weighted')) kg = p.kg;
     if (kg == null) {
       for (let j = i - 1; j >= 0 && kg == null; j--) {
         const x = it.sets[j];
@@ -927,26 +972,6 @@
     return it.cfg.rest || S.settings.restSec;
   }
 
-  /** After a set finishes, the next set (same side) starts with the same weights unless you change them. */
-  function carryForward(k, i) {
-    const it = S.current.items[k];
-    const s = it.sets[i];
-    if (s.warm) return;
-    // The very next set (for one side at a time, that's the other side) and the next set on this side.
-    const free = (x, j) => j > i && !x.warm && !x.start && !x.end;
-    const targets = new Set([
-      it.sets.findIndex(free),
-      it.sets.findIndex((x, j) => free(x, j) && (x.side || '') === (s.side || '')),
-    ]);
-    targets.forEach((n) => {
-      if (n < 0) return;
-      const next = it.sets[n];
-      if (next.kg === '' && s.kg !== '' && next.mode === s.mode) next.kg = s.kg;
-      if (it.cfg.style === 'ultimate') regenUltimate(k, n);
-      else s.drops.forEach((d, j) => next.drops[j] && next.drops[j].kg === '' && d.kg !== '' && (next.drops[j].kg = d.kg));
-    });
-  }
-
   function endSet(k, i) {
     const c = S.current;
     const it = c.items[k];
@@ -965,7 +990,8 @@
       }
     });
     if (s.mode === 'Band' && !String(s.band || '').trim()) s.band = it.cfg.band || 'Purple';
-    carryForward(k, i);
+    // The sets after this one now hint this set's weights (see placeholder), shown dim until you're on them.
+    regenUpcoming(k);
     c.lastEnd = s.end;
     c.lastEndKey = k;
     const target = restAfter(k, s);
@@ -1689,6 +1715,25 @@
   }
 
   /** One set row: number, weight, the Start/End button, then reps (only enterable after End). */
+  /** What a weight box shows: what you typed, else on the row you're on, the hint. */
+  const kgShown = (own, hint, active) => (own !== '' && own != null ? own : active && hint != null ? fmt(hint) : '');
+
+  /** Updates an exercise's weight boxes in place as you type, so hints follow without a re-render. */
+  function refreshHints(k) {
+    const it = S.current.items[k];
+    const act = activeRow(k);
+    document.querySelectorAll(`input[data-f="kg"][data-k="${k}"]`).forEach((el) => {
+      const i = +el.dataset.i;
+      const s = it.sets[i];
+      const j = el.dataset.d != null ? +el.dataset.d : null;
+      const d = s && j != null ? s.drops[j] : null;
+      if (!s || (j != null && !d) || el === document.activeElement) return;
+      const ph = d ? dropPlaceholder(k, i, j) : placeholder(k, i);
+      el.placeholder = ph.kg == null ? '' : fmt(ph.kg);
+      el.value = kgShown(d ? d.kg : s.kg, ph.kg, i === act);
+    });
+  }
+
   function setRowHtml(k, i, label) {
     const it = S.current.items[k];
     const def = exDef(it.name);
@@ -1700,6 +1745,8 @@
       `<input class="${extra || ''}" data-f="${f}" ${a} value="${esc(v)}" placeholder="${p == null ? '' : esc(fmt(p))}" inputmode="${mode}" autocomplete="off" aria-label="${aria}"${
         (f === 'reps' || f === 'partials') && locked ? ' disabled' : ''
       }>`;
+    // Hinted weights stay dim, except on the row you're on, where the hint shows as the value.
+    const kgVal = kgShown(s.kg, ph.kg, activeRow(k) === i);
     const type = rowType(k);
     const state = (s.end ? ' done' : s.start ? ' running' : '') + (s.warm ? ' warm' : '') + (s.side ? ' side' : '');
     let h = `<div class="set-row ${type}${label ? ' labeled' : ''}${state}">`;
@@ -1712,11 +1759,11 @@
       ]
         .map(([v, t]) => `<option value="${v}" ${s.mode === v ? 'selected' : ''}>${t}</option>`)
         .join('')}</select>`;
-      if (s.mode === 'Weighted') h += input('kg', s.kg, ph.kg, 'decimal', 'Added kg');
+      if (s.mode === 'Weighted') h += input('kg', kgVal, ph.kg, 'decimal', 'Added kg');
       else if (s.mode === 'Band') h += `<input data-f="band" ${a} value="${esc(s.band)}" placeholder="Purple" autocomplete="off" autocapitalize="words" aria-label="Band">`;
       else h += '<span class="dash">—</span>';
     } else {
-      h += input('kg', s.kg, ph.kg, 'decimal', def.kgLabel ? 'Added kg' : 'kg');
+      h += input('kg', kgVal, ph.kg, 'decimal', def.kgLabel ? 'Added kg' : 'kg');
     }
     if (s.end) h += `<button class="sbtn done" data-action="set-btn" ${a} aria-label="Done. Tap twice to undo">${ICON.check}</button>`;
     else if (s.start) h += `<button class="sbtn run" data-action="set-btn" ${a}><span>End</span><span class="rt" id="rt-${s.id}"></span></button>`;
@@ -1736,7 +1783,7 @@
     const a = `data-k="${k}" data-i="${i}" data-d="${j}"`;
     return `<div class="drop-row ${partialsOn(k) ? 'np' : 'normal'}${label ? ' labeled' : ''}${s.end ? ' done' : ''}">
       <span class="drop-mark" aria-hidden="true">↳</span>
-      <input data-f="kg" ${a} value="${esc(d.kg)}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg">
+      <input data-f="kg" ${a} value="${esc(kgShown(d.kg, ph.kg, activeRow(k) === i))}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg">
       <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}">✕</button>
       <input data-f="reps" ${a} value="${esc(d.reps)}" placeholder="${ph.reps == null ? '' : esc(ph.reps)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} reps"${s.end ? '' : ' disabled'}>
       ${partialsOn(k) ? '<span></span>' : ''}
@@ -2616,8 +2663,18 @@
       s[f] = el.value;
     }
     if (el.value) el.classList.remove('need');
+    if (f === 'kg') refreshHints(k);
     persist();
     if (s.end) requeueSoon(k, s.id);
+  });
+
+  // Tapping a weight that's only the hint selects it, so typing replaces it rather than adding to it.
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (el.dataset.f !== 'kg' || !S.current || el.dataset.k == null || !el.value) return;
+    const s = S.current.items[el.dataset.k] && S.current.items[el.dataset.k].sets[+el.dataset.i];
+    const own = s && (el.dataset.d != null ? (s.drops[+el.dataset.d] || {}).kg : s.kg);
+    if (own === '') setTimeout(() => el === document.activeElement && el.setSelectionRange(0, el.value.length), 0);
   });
 
   document.addEventListener('change', (e) => {
@@ -2640,6 +2697,7 @@
       const i = +el.dataset.i;
       if (S.current.items[k].cfg.style === 'ultimate') {
         regenUltimate(k, i);
+        regenUpcoming(k);
         persist();
         render();
       }
