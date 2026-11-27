@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.4';
+  const VERSION = '3.5.5';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -348,9 +348,12 @@
         const dn = num(r.Drop) || 0;
         const right = r.Side === 'R';
         if (dn > 0) {
-          const d = e.drops[dn - 1] || (e.drops[dn - 1] = { kg: null, reps: null, repsR: null });
+          const d = e.drops[dn - 1] || (e.drops[dn - 1] = { kg: null, reps: null, repsR: null, partials: null });
           if (right) d.repsR = num(r.Reps);
-          else d.reps = num(r.Reps);
+          else {
+            d.reps = num(r.Reps);
+            d.partials = num(r.Partials);
+          }
           if (d.kg == null) d.kg = num(r.kg);
           return;
         }
@@ -580,7 +583,7 @@
   }
 
   // ---------- Set styles and drops ----------
-  const newDrop = (kg) => ({ id: uid(), kg: kg == null ? '' : fmt(kg), reps: '' });
+  const newDrop = (kg) => ({ id: uid(), kg: kg == null ? '' : fmt(kg), reps: '', partials: '' });
   const canDrop = (k) => !itemDef(k).bodyweight;
   /** A working set with drops (planned by the set style, or added with "+ Drop Set"). */
   const isDropSet = (k, s) => !s.warm && (s.drops || []).length > 0 && canDrop(k);
@@ -635,7 +638,7 @@
       // The ladder: step down from the set's weight.
       const start = num(s.kg) != null ? num(s.kg) : placeholder(k, i).kg;
       const step = num(it.cfg.step) || 2.5;
-      return { kg: start ? Math.round((start - step * (j + 1)) * 100) / 100 : null, reps: pd ? pd.reps : null };
+      return { kg: start ? Math.round((start - step * (j + 1)) * 100) / 100 : null, reps: pd ? pd.reps : null, partials: pd ? pd.partials : null };
     }
     // The same drop as the set before once it's done, else last time's same drop, else carry on the step down.
     const src = carrySource(k, i);
@@ -646,7 +649,7 @@
       const b = at(j - 2);
       if (a != null && b != null && b > a && a - (b - a) > 0) kg = Math.round((a - (b - a)) * 100) / 100;
     }
-    return { kg, reps: pd ? pd.reps : null };
+    return { kg, reps: pd ? pd.reps : null, partials: pd ? pd.partials : null };
   }
 
   /**
@@ -846,14 +849,15 @@
       ID: s.id,
     };
     const rows = [base];
-    // Drops share the set's number, side and times; only drops with something typed are saved.
+    // Drops share the set's number, side and times; only drops with reps or partials typed are saved.
     let n = 0;
     (s.drops || []).forEach((d) => {
       const dkg = num(d.kg);
       const dr = num(d.reps);
-      if (dr == null) return;
+      const dp = num(d.partials);
+      if (dr == null && dp == null) return;
       n++;
-      rows.push(Object.assign({}, base, { Drop: n, kg: dkg == null ? '' : dkg, Reps: dr, Partials: '', 'Set (s)': '', 'Rest (s)': '', ID: dropBase(s, d) }));
+      rows.push(Object.assign({}, base, { Drop: n, kg: dkg == null ? '' : dkg, Reps: dr == null ? '' : dr, Partials: dp == null ? '' : dp, 'Set (s)': '', 'Rest (s)': '', ID: dropBase(s, d) }));
     });
     return rows;
   }
@@ -1058,24 +1062,6 @@
     const unfinished = (b) => b.keys.some((k) => c.items[k].sets.some((s) => !s.end));
     const from = c.lastEndKey ? c.blocks.indexOf(blockOf(c.lastEndKey)) : -1;
     return c.blocks.slice(from + 1).find(unfinished) || c.blocks.find(unfinished) || null;
-  }
-
-  /** A drop set is part of the set, not rest: reopen the set you just ended so its clock carries on. */
-  function isJustFinished(k, i) {
-    const s = S.current.items[k].sets[i];
-    return !!s.end && s.end === S.current.lastEnd && !runningSet();
-  }
-  function resumeIfJustFinished(k, i) {
-    if (!isJustFinished(k, i)) return;
-    const c = S.current;
-    c.items[k].sets[i].end = null;
-    let last = null;
-    forEachSet((kk, ii, x) => {
-      if (x.end && (!last || x.end > last)) last = x.end;
-    });
-    c.lastEnd = last;
-    c.restCountdown = false;
-    toast('Set Resumed For Your Drop · Tap End When Done');
   }
 
   function undoSet(k, i) {
@@ -1825,7 +1811,11 @@
       <input data-f="kg" ${a} value="${esc(kgShown(d.kg, ph.kg, activeRow(k) === i))}" placeholder="${ph.kg == null ? '' : esc(fmt(ph.kg))}" inputmode="decimal" autocomplete="off" aria-label="Drop ${j + 1} kg"${skip}>
       <button class="drop-x" data-action="drop-remove" ${a} aria-label="Remove drop ${j + 1}"${skip}>✕</button>
       <input data-f="reps" ${a} value="${esc(d.reps)}" placeholder="${ph.reps == null ? '' : esc(ph.reps)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} reps"${s.end ? '' : ' disabled'}>
-      ${partialsOn(k) ? '<span></span>' : ''}
+      ${
+        partialsOn(k)
+          ? `<input data-f="partials" ${a} value="${esc(d.partials)}" placeholder="${ph.partials == null ? '' : esc(ph.partials)}" inputmode="numeric" autocomplete="off" aria-label="Drop ${j + 1} partial reps"${s.end ? '' : ' disabled'}>`
+          : ''
+      }
     </div>`;
   }
 
@@ -1865,9 +1855,9 @@
         else if (!s.start && activeRow(k) === i) inner += '<span class="muted">One continuous set · Start, go through every drop, End, then enter the reps</span>';
         else if (s.end && s.drops.some((d) => d.reps === '')) inner += '<span class="muted">Enter the reps for each drop you did</span>';
       }
-      if ((it.cfg.style || 'normal') === 'normal' && isJustFinished(k, i)) {
-        // Only on the set you just finished: tapping it reopens that set for the drop.
-        inner += `<button class="drop-add" data-action="drop-add" ${a}>+ Drop Set</button>`;
+      if ((it.cfg.style || 'normal') === 'normal' && !s.end && activeRow(k) === i) {
+        // On the set you're about to do (or doing), so you can set the drop weight before you start.
+        inner += `<button class="drop-add" data-action="drop-add" ${a}>${s.drops.length ? '+ Another Drop' : '+ Drop Set'}</button>`;
       }
     }
     if (it.cfg.style === 'ultimate' && !s.warm && !s.drops.length && !s.end) inner += '<span class="muted">Drops fill in once you enter the weight</span>';
@@ -2410,7 +2400,6 @@
       const k = el.dataset.k;
       const i = +el.dataset.i;
       const s = S.current.items[k].sets[i];
-      resumeIfJustFinished(k, i);
       s.drops.push(newDrop());
       persist();
       render();

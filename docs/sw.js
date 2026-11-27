@@ -1,6 +1,6 @@
 ﻿// Offline support: serve the app from cache when there's no signal,
 // but always try the network first (for up to 3 seconds) so updates arrive.
-const CACHE = 'tt-v19';
+const CACHE = 'tt-v20';
 const ASSETS = [
   './',
   './index.html',
