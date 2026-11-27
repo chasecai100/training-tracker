@@ -44,7 +44,7 @@ A web app for your iPhone and PC.
 | | Pec Deck Fly | 5 | 2:00 | 1 warm-up |
 | | Shoulder Press | 8 | 1:30 | Smith / Dumbbell |
 | | Dumbbell Pullover | 5 | 1:30 | |
-| | Tricep Overhead Extension | 2 | 2:00 | Single Rope / Double Cable · Rope / V-Bar · ultimate drop set (2.5 kg steps to 5 kg, then 2.5 kg) |
+| | Tricep | 2 | 2:00 | Overhead Extension / Pushdown · Single Rope / Double Cable / V Bar · ultimate drop set (2.5 kg steps to 5 kg, then 2.5 kg) |
 | Pull | Pull-Up + Chin-Up superset | 5 rounds | 1:00 between, 2:00 after | BW sets 1–2, purple band sets 3–5 · full and partial reps |
 | | Seated Row | 5 | 2:00 | Wide MAG Grip (or Close MAG, Medium MAG, V Grip) |
 | | Core Exercise | 3 | 1:30 | Ab Crunch |
@@ -86,7 +86,7 @@ A web app for your iPhone and PC.
   - **PRs:** heaviest weight, best estimated 1-rep max, or most reps at a weight.
   - **"To beat":** last time's same set with one more rep.
 - **Notes:** one per exercise, stored in the sheet's Notes tab. Edit them in Exercises; workouts only show them.
-- **Old names:** history logged under earlier names (Pull-up, Triceps, Ab Raise…) is read under today's names, so "last time" and PRs carry over.
+- **Old names:** history logged under earlier names (Pull-up, Triceps, Tricep Overhead Extension, Ab Raise…) is read under today's names, so "last time", PRs and notes carry over.
 
 ## Spreadsheet layout
 

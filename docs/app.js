@@ -4,7 +4,7 @@
   const CFG = window.TT_CONFIG;
   const DEF = window.TT_DEFAULTS;
   const DAYS = ['Push', 'Pull', 'Legs', 'Shoulders'];
-  const VERSION = '3.5.2';
+  const VERSION = '3.5.3';
   const WORKOUT_V = 3;
   const KEYS = { settings: 'tt.settings', library: 'tt.library', current: 'tt.current', pending: 'tt.pending' };
 
@@ -18,7 +18,10 @@
     'Incline Bench', 'Shoulder Press', 'Triceps', 'Lat Pulldown', 'Reverse Fly', 'Biceps', 'Calves',
   ];
   // Old names in your history are read as the new ones, so "last time" and PRs carry over.
-  const NAME_ALIAS = { 'Pull-up': 'Pull-Up', 'Chin-up': 'Chin-Up', Triceps: 'Tricep Overhead Extension', 'Incline Bench': 'Incline Smith Bench', 'Pec Deck': 'Pec Deck Fly' };
+  const NAME_ALIAS = {
+    'Pull-up': 'Pull-Up', 'Chin-up': 'Chin-Up', Triceps: 'Tricep', 'Tricep Overhead Extension': 'Tricep',
+    'Incline Bench': 'Incline Smith Bench', 'Pec Deck': 'Pec Deck Fly',
+  };
   const CORE_ALIAS = { 'Ab Raise': 'Ab Raise', 'Ab Crunch': 'Ab Crunch' };
   const VAR_ALIAS = {
     'Seated Row': { 'Close MAG grip': 'Close MAG Grip', 'Medium MAG grip': 'Medium MAG Grip' },
@@ -26,8 +29,17 @@
     'Machine Press': { 'Weight stack': 'Weight Stack', 'Plate-loaded': 'Plate Loaded' },
     'Reverse Fly': { Double: 'Machine · Double', 'Single arm': 'Machine · Single' },
     Biceps: { Cable: 'Cable · Double', 'Supported single arm': 'Bench Supported · Single' },
-    'Tricep Overhead Extension': { 'Overhead extension': 'Single Rope · Rope' },
+    // Before Pushdown was added, every Tricep set was an overhead extension.
+    Tricep: {
+      'Overhead extension': 'Overhead Extension · Single Rope',
+      'Single Rope · Rope': 'Overhead Extension · Single Rope',
+      'Double Cable · Rope': 'Overhead Extension · Double Cable',
+      'Single Rope · V-Bar': 'Overhead Extension · V Bar',
+      'Double Cable · V-Bar': 'Overhead Extension · V Bar',
+    },
   };
+  // Exercises renamed in place: [old name, new name, the new default choices].
+  const RENAMED = [['Tricep Overhead Extension', 'Tricep', { Setup: 'Overhead Extension', Attachment: 'Single Rope' }]];
 
   const ICON = {
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -182,6 +194,20 @@
       lib = { version: DEF.version, exercises: DEF.exercises.concat(custom).map(normalizeEx), days: clone(DEF.days) };
       if (load(KEYS.library, null)) notice = 'Your new split and Workout Setup are loaded. Fine-tune them in Settings.';
     } else {
+      // A renamed exercise takes its new name and options, keeping its place in your list and Workout Setup.
+      RENAMED.forEach(([from, to, choices]) => {
+        if (!lib.exercises.some((e) => e.name === from)) return;
+        lib.exercises = lib.exercises.filter((e) => e.name !== to);
+        lib.exercises[lib.exercises.findIndex((e) => e.name === from)] = clone(DEF.exercises.find((e) => e.name === to));
+        DAYS.forEach((d) =>
+          (lib.days[d] || []).forEach((it) => {
+            if (!(it.names || []).includes(from)) return;
+            it.names = it.names.map((n) => (n === from ? to : n));
+            it.choices = Object.assign({}, it.choices, { [to]: choices });
+            delete it.choices[from];
+          })
+        );
+      });
       lib.exercises = lib.exercises.map(normalizeEx);
       const have = new Set(lib.exercises.map((e) => e.name));
       DEF.exercises.forEach((e) => !have.has(e.name) && lib.exercises.push(normalizeEx(e)));
@@ -201,6 +227,11 @@
       store(KEYS.current, null);
       notice = 'The app was updated, so your open workout was closed. Sets you had finished are saved.';
       return null;
+    }
+    if (c) {
+      RENAMED.forEach(([from, to, choices]) =>
+        Object.values(c.items || {}).forEach((it) => it.name === from && Object.assign(it, { name: to, choices: clone(choices) }))
+      );
     }
     return c;
   }
@@ -266,7 +297,9 @@
   function notesMap() {
     if (memoNotes) return memoNotes;
     const m = {};
-    S.history.notes.forEach((r) => (m[r.Exercise] = r.Note || ''));
+    // A note saved under an exercise's old name shows under its new one, unless the new name has its own.
+    S.history.notes.forEach((r) => NAME_ALIAS[r.Exercise] && (m[NAME_ALIAS[r.Exercise]] = r.Note || ''));
+    S.history.notes.forEach((r) => !NAME_ALIAS[r.Exercise] && (m[r.Exercise] = r.Note || ''));
     Object.values(S.pending.notes).forEach((r) => (m[r.Exercise] = r.Note || ''));
     return (memoNotes = m);
   }

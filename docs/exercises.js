@@ -27,10 +27,10 @@ window.TT_DEFAULTS = {
     { name: 'Shoulder Press', options: [{ label: 'Type', choices: ['Smith', 'Dumbbell'] }] },
     { name: 'Dumbbell Pullover' },
     {
-      name: 'Tricep Overhead Extension',
+      name: 'Tricep',
       options: [
-        { label: 'Setup', choices: ['Single Rope', 'Double Cable'] },
-        { label: 'Attachment', choices: ['Rope', 'V-Bar'] },
+        { label: 'Setup', choices: ['Overhead Extension', 'Pushdown'] },
+        { label: 'Attachment', choices: ['Single Rope', 'Double Cable', 'V Bar'] },
       ],
     },
     { name: 'Pull-Up', bodyweight: true, partials: true },
@@ -73,13 +73,13 @@ window.TT_DEFAULTS = {
       { names: ['Shoulder Press'], sets: 8, rest: 90 },
       { names: ['Dumbbell Pullover'], sets: 5, rest: 90 },
       {
-        names: ['Tricep Overhead Extension'],
+        names: ['Tricep'],
         sets: 2,
         rest: 120,
         style: 'ultimate',
         step: 2.5,
         floors: [5, 2.5],
-        choices: { 'Tricep Overhead Extension': { Setup: 'Single Rope', Attachment: 'Rope' } },
+        choices: { Tricep: { Setup: 'Overhead Extension', Attachment: 'Single Rope' } },
       },
     ],
     Pull: [
