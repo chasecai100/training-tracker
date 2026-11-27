@@ -110,13 +110,31 @@ function sync_(req) {
   }
 }
 
+// Number columns are read as stored, so a cell's display format (a stray time format,
+// or rounding) can't change the numbers the app and Excel get.
+const NUMBERS = {
+  Sets: ['Set', 'Drop', 'kg', 'Reps', 'Partials', 'Set (s)', 'Rest (s)'],
+  Sessions: ['Length (min)', 'Sets', 'Work (min)', 'Rest (min)'],
+};
+
 function history_() {
   const read = (name) => {
     const sh = sheet_(name);
     const cols = sh.getLastColumn();
     const headers = sh.getRange(1, 1, 1, cols).getDisplayValues()[0];
     const n = sh.getLastRow() - 1;
-    const rows = n > 0 ? sh.getRange(2, 1, n, cols).getDisplayValues() : [];
+    if (n < 1) return { headers: headers, rows: [] };
+    const range = sh.getRange(2, 1, n, cols);
+    const rows = range.getDisplayValues();
+    const nums = (NUMBERS[name] || []).map((h) => headers.indexOf(h)).filter((c) => c >= 0);
+    if (nums.length) {
+      const raw = range.getValues();
+      rows.forEach((r, i) =>
+        nums.forEach((c) => {
+          if (typeof raw[i][c] === 'number') r[c] = String(raw[i][c]);
+        })
+      );
+    }
     return { headers: headers, rows: rows };
   };
   return { ok: true, sets: read(SETS), sessions: read(SESSIONS), notes: read(NOTES) };
@@ -200,6 +218,8 @@ function ensureHeaders_(sh, name) {
     if (sh.getMaxColumns() < want.length) sh.insertColumnsAfter(sh.getMaxColumns(), want.length - sh.getMaxColumns());
     sh.getRange(1, 1, 1, Math.max(lastCol, want.length)).clearContent();
     sh.getRange(1, 1, 1, want.length).setValues([want]).setFontWeight('bold');
+    // Columns moved, so drop the old layout's formats (a time format once landed on kg and Reps).
+    if (sh.getMaxRows() > 1) sh.getRange(2, 1, sh.getMaxRows() - 1, sh.getMaxColumns()).clearFormat();
     format_(sh, name, want, 2, sh.getMaxRows() - 1);
     return;
   }
